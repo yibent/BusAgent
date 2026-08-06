@@ -1,0 +1,41 @@
+name: 使用场景
+description: 提交一个可用于验证 BusAgent 的真实场景
+title: "[Use case]: "
+labels:
+  - use-case
+body:
+  - type: textarea
+    id: context
+    attributes:
+      label: 场景背景
+      description: 谁在什么环境中希望完成什么任务？
+    validations:
+      required: true
+  - type: textarea
+    id: flow
+    attributes:
+      label: 期望流程
+      description: 描述输入、关键节点、输出和用户交互。
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: 资源与顺序约束
+      description: 哪些步骤可并行，哪些资源必须串行？
+    validations:
+      required: true
+  - type: textarea
+    id: failures
+    attributes:
+      label: 失败与安全边界
+      description: 哪些错误最重要，何时需要停止或人工确认？
+    validations:
+      required: true
+  - type: textarea
+    id: metrics
+    attributes:
+      label: 成功指标
+      description: 如何衡量延迟、正确性、体验或安全收益？
+    validations:
+      required: true

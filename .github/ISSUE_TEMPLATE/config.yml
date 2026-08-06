@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report
+    url: https://github.com/xzgzszrh/BusAgent/security/advisories/new
+    about: 请通过 GitHub 私密漏洞报告功能提交安全问题。

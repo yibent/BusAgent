@@ -1,0 +1,33 @@
+name: 文档问题
+description: 报告缺失、错误、歧义或不一致的文档
+title: "[Docs]: "
+labels:
+  - documentation
+body:
+  - type: input
+    id: location
+    attributes:
+      label: 文档位置
+      description: 提供文件路径、章节或链接。
+    validations:
+      required: true
+  - type: textarea
+    id: issue
+    attributes:
+      label: 问题
+      description: 哪部分内容不正确、不清晰或缺失？
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: 建议修改
+    validations:
+      required: false
+  - type: checkboxes
+    id: security
+    attributes:
+      label: 安全确认
+      options:
+        - label: 该问题不包含需要私下报告的安全漏洞或敏感信息。
+          required: true
