@@ -7,6 +7,7 @@ import { HostConfig } from './config/host-config.js';
 import { BusAgentError } from './common/errors.js';
 import { EventIngressService } from './bus/event-ingress.service.js';
 import { RegistrationService } from './registry/registration.service.js';
+import { HostRuntimeService } from './app/host-runtime.service.js';
 import { registerExampleAgents } from './examples/example-agents.js';
 
 /** Minimal structural view of the Fastify reply used for route registration. */
@@ -43,14 +44,21 @@ async function bootstrap(): Promise<void> {
     logger: ['error', 'warn', 'log'],
   });
   app.enableShutdownHooks();
-  await app.init();
 
   // The two public endpoints honor the configurable paths (spec §4, §8).
   const ingress = app.get(EventIngressService);
   const registrations = app.get(RegistrationService);
+  const runtime = app.get(HostRuntimeService);
   const fastify = app.getHttpAdapter().getInstance() as unknown as FastifyInstanceLike;
 
+  // The registration endpoint must stay open while the host waits for required
+  // external agents; the event ingress is gated on readiness instead (spec §4
+  // step 8-9: events are routed only once the app is `ready`).
   fastify.post(config.eventIngressPath, async (request, reply) => {
+    if (runtime.currentState !== 'ready') {
+      reply.code(503).send({ error: 'NOT_READY', message: 'host is still starting' });
+      return;
+    }
     const result = await ingress.handle(bodyOf(request));
     reply.code(result.status).send(result.body);
   });
@@ -59,11 +67,16 @@ async function bootstrap(): Promise<void> {
     reply.code(result.status).send(result.body);
   });
 
+  // Nest's listen() runs the bootstrap hooks before binding the port, so the
+  // readiness wait must happen after the port is up or external agents could
+  // never reach /internal/registrations during the wait.
   await app.listen(config.port, '0.0.0.0');
   Logger.log(
     `BusAgent host listening on :${config.port} (ingress=${config.eventIngressPath}, registration=${config.registrationPath})`,
     'BusAgentHost',
   );
+
+  await runtime.awaitReady();
 }
 
 void bootstrap().catch((error: unknown) => {

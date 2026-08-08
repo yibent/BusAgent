@@ -1,14 +1,19 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
-import { type Job, Worker } from 'bullmq';
+import { type Job, type JobsOptions, Worker } from 'bullmq';
 import { Clock } from '../../common/clock.js';
 import { deliveryId } from '../../common/ids.js';
 import type { AppSnapshot } from '../../app/startup-snapshot.js';
 import { RegistryService } from '../../registry/registry.service.js';
+import { LeaseManager } from '../../leases/lease-manager.service.js';
 import { RuntimeState } from '../../app/runtime-state.service.js';
 import { AgentAdapterFactory } from '../../adapters/agent-adapter-factory.js';
 import { EventsRepository } from '../../persistence/repositories/events.repository.js';
-import { DeliveriesRepository } from '../../persistence/repositories/deliveries.repository.js';
+import {
+  DeliveriesRepository,
+  type RecoverableDelivery,
+} from '../../persistence/repositories/deliveries.repository.js';
 import { DeadLettersRepository } from '../../persistence/repositories/dead-letters.repository.js';
+import { fromMysqlDatetime } from '../../persistence/db/mysql-datetime.js';
 import { TaskService } from '../tasks/task.service.js';
 import { PhysicalActionState } from '../physical/physical-action-state.service.js';
 import { QueueManager } from '../queue/queue-manager.service.js';
@@ -49,6 +54,7 @@ export class DeliveryService implements OnModuleDestroy {
     private readonly redis: RedisConnection,
     private readonly adapterFactory: AgentAdapterFactory,
     private readonly registry: RegistryService,
+    private readonly leases: LeaseManager,
     private readonly runtime: RuntimeState,
     private readonly eventsRepo: EventsRepository,
     private readonly deliveriesRepo: DeliveriesRepository,
@@ -57,7 +63,7 @@ export class DeliveryService implements OnModuleDestroy {
     private readonly physicalState: PhysicalActionState,
   ) {}
 
-  /** One worker per queue (app_id + agent_id). */
+  /** One worker per queue (app_id + agent_id); concurrency from the Package. */
   init(snapshot: AppSnapshot): void {
     if (this.initialized) {
       return;
@@ -65,10 +71,12 @@ export class DeliveryService implements OnModuleDestroy {
     this.initialized = true;
     for (const agentId of snapshot.agentIds) {
       const queue = this.queueManager.ensure(snapshot.appId, agentId);
+      const installed = this.registry.get(agentId);
+      const concurrency = installed?.concurrency.limit ?? 4;
       const worker = new Worker<DeliveryJobData>(
         queue.name,
         async (job) => this.process(job),
-        { connection: this.redis.client, concurrency: 4 },
+        { connection: this.redis.client, concurrency },
       );
       worker.on('error', (error) =>
         this.logger.error(`BullMQ worker error on ${queue.name}`, error.stack),
@@ -83,10 +91,26 @@ export class DeliveryService implements OnModuleDestroy {
     }
   }
 
-  /** Re-queues deliveries that still owe a BullMQ job after a restart (spec §14). */
+  /**
+   * Re-queues deliveries that still owe a BullMQ job after a restart (spec
+   * §14). Only deliveries for agents still in the current App snapshot are
+   * recovered; a removed agent has no worker and its jobs would sit forever.
+   * Re-added jobs keep the remaining attempt budget and the effective backoff,
+   * so a delivery that was mid-backoff does not fire immediately.
+   */
   async recoverFromMysql(): Promise<void> {
+    const snapshot = this.runtime.current;
     const pending = await this.deliveriesRepo.findRecoverable(this.clock.now());
     for (const delivery of pending) {
+      if (delivery.appId !== snapshot.appId || !snapshot.agents.has(delivery.agentId)) {
+        await this.deliveriesRepo.recordAttempt(delivery.id, {
+          status: 'dead',
+          attempts: delivery.attempts,
+          lastError: 'agent no longer in the app snapshot; delivery not recovered',
+          updatedAt: this.clock.now(),
+        });
+        continue;
+      }
       const queue = this.queueManager.ensure(delivery.appId, delivery.agentId);
       const existing = await queue.getJob(delivery.id).catch(() => null);
       if (existing) {
@@ -98,17 +122,53 @@ export class DeliveryService implements OnModuleDestroy {
           await existing.remove().catch(() => undefined);
         }
       }
+      const event = await this.eventsRepo.findById(delivery.eventId);
+      if (!event) {
+        continue;
+      }
+      const entry = snapshot.agents.get(delivery.agentId);
+      const kind = eventKindOf(event, this.registry);
+      const effective = resolveRetry(
+        entry?.packageRetry ?? FALLBACK_RETRY,
+        entry?.retryOverride,
+        kind,
+      );
+      const remaining = Math.max(1, delivery.maxAttempts - delivery.attempts);
+      const jobOptions: JobsOptions = {
+        jobId: delivery.id,
+        attempts: remaining,
+        priority: event.priority,
+        removeOnComplete: true,
+        removeOnFail: false,
+      };
+      if (remaining > 1) {
+        const delayMs = this.remainingBackoffMs(delivery, effective.backoffMs);
+        if (delayMs > 0) {
+          jobOptions.backoff = { type: 'fixed', delay: delayMs };
+        }
+      }
       await queue.add(
         'deliver',
         { eventId: delivery.eventId, agentId: delivery.agentId, appId: delivery.appId },
-        {
-          jobId: delivery.id,
-          attempts: delivery.maxAttempts,
-          removeOnComplete: true,
-          removeOnFail: false,
-        },
+        jobOptions,
       );
     }
+  }
+
+  /**
+   * Remaining delay for a recovered retrying delivery: honour the recorded
+   * `next_attempt_at` when it is still in the future, else the policy backoff.
+   */
+  private remainingBackoffMs(delivery: RecoverableDelivery, policyMs: number): number {
+    if (delivery.nextAttemptAt) {
+      const remaining =
+        new Date(fromMysqlDatetime(delivery.nextAttemptAt)).getTime() -
+        this.clock.nowMs();
+      if (remaining > 0) {
+        return remaining;
+      }
+    }
+    return policyMs;
   }
 
   private async process(job: Job<DeliveryJobData>): Promise<string> {
@@ -125,6 +185,18 @@ export class DeliveryService implements OnModuleDestroy {
     }
 
     const kind = eventKindOf(event, this.registry);
+
+    // Re-check the lease before each attempt: an event routed while the lease
+    // was active must not reach an agent whose lease has since expired (spec
+    // §14). Marked `skipped` so it is not retried into a dead agent.
+    if (!this.leases.isActive(agentId)) {
+      await this.deliveriesRepo.recordAttempt(deliveryId(eventId, agentId), {
+        status: 'skipped',
+        attempts: job.attemptsMade + 1,
+        updatedAt: this.clock.now(),
+      });
+      return 'skipped';
+    }
 
     // Re-check task state before each delivery attempt (spec §10).
     if (
@@ -180,11 +252,16 @@ export class DeliveryService implements OnModuleDestroy {
         entry?.retryOverride,
         kind,
       );
-      const attemptsMade = job.attemptsMade + 1;
+      // BullMQ increments job.attemptsMade inside moveToFailed before emitting
+      // 'failed', so it already counts the attempt that just failed. The total
+      // budget to compare against is the job's own `attempts` — after recovery
+      // that is the remaining budget, not the full policy maximum.
+      const attemptsMade = job.attemptsMade;
+      const totalAttempts = job.opts.attempts ?? 1;
       const id = deliveryId(eventId, agentId);
       const now = this.clock.now();
 
-      if (attemptsMade >= effective.maxAttempts) {
+      if (attemptsMade >= totalAttempts) {
         if (kind === 'physical') {
           await this.deadLettersRepo.insert({
             eventId,

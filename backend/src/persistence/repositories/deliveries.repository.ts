@@ -20,6 +20,9 @@ export interface RecoverableDelivery {
   agentId: string;
   queueName: string;
   maxAttempts: number;
+  attempts: number;
+  /** Recorded `next_attempt_at` (MySQL DATETIME string) or null. */
+  nextAttemptAt: string | null;
 }
 
 @Injectable()
@@ -106,6 +109,8 @@ export class DeliveriesRepository {
       agentId: row.agent_id,
       queueName: row.queue_name,
       maxAttempts: row.max_attempts,
+      attempts: row.attempts,
+      nextAttemptAt: row.next_attempt_at,
     }));
   }
 

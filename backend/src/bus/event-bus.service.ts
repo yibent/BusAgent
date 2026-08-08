@@ -148,6 +148,8 @@ export class EventBus {
   ): Promise<void> {
     const now = this.clock.now();
 
+    // Physical side effects require an execution credential and an idempotency
+    // key; the envelope is rejected outright otherwise (spec §10).
     if (isPhysicalEventType(event.eventType, this.registry)) {
       if (!event.idempotencyKey || !hasExecutionCredential(event.payload)) {
         throw new BusAgentError(
@@ -157,59 +159,66 @@ export class EventBus {
       }
     }
 
-    if (event.idempotencyKey) {
-      const existing = await this.idempotency.existingEventId(event.idempotencyKey);
-      if (existing) {
-        await this.audit.append('idempotent.replay', 'event', event.eventId, {
-          idempotencyKey: event.idempotencyKey,
-          originalEventId: existing,
-        });
-        return;
-      }
-    }
-
+    let taskVerdict: 'stale' | 'cancelled' | null = null;
+    let gateTaskId: string | undefined;
+    let gateTaskVersion: number | undefined;
     if (event.taskId !== undefined && event.taskVersion !== undefined) {
-      const verdict = await this.taskService.checkVersion(
-        event.taskId,
-        event.taskVersion,
-      );
-      if (verdict === 'stale') {
-        await this.eventsRepo.insert(event, {
-          receivedAt: now,
-          trace: this.trace(now),
-          status: 'stale',
-        });
-        await this.audit.append('event.stale', 'event', event.eventId, {
-          taskId: event.taskId,
-          taskVersion: event.taskVersion,
-        });
-        return;
+      gateTaskId = event.taskId;
+      gateTaskVersion = event.taskVersion;
+      const verdict = await this.taskService.checkVersion(gateTaskId, gateTaskVersion);
+      if (verdict === 'stale' || verdict === 'cancelled') {
+        taskVerdict = verdict;
+      } else {
+        await this.taskService.ensureTask(gateTaskId, event.appId, gateTaskVersion);
       }
-      if (verdict === 'cancelled') {
-        await this.eventsRepo.insert(event, {
-          receivedAt: now,
-          trace: this.trace(now),
-          status: 'dropped',
-        });
-        await this.audit.append('event.task-cancelled', 'event', event.eventId, {
-          taskId: event.taskId,
-        });
-        return;
-      }
-      await this.taskService.ensureTask(event.taskId, event.appId, event.taskVersion);
     }
 
-    await this.eventsRepo.insert(event, {
-      receivedAt: now,
-      trace: this.trace(now),
-      status: 'ingested',
-    });
-    if (event.idempotencyKey) {
-      await this.idempotency.record(
-        event.idempotencyKey,
+    const isPhysical = isPhysicalEventType(event.eventType, this.registry);
+    const status: 'ingested' | 'stale' | 'dropped' =
+      taskVerdict === 'stale'
+        ? 'stale'
+        : taskVerdict === 'cancelled'
+          ? 'dropped'
+          : 'ingested';
+
+    // The idempotency claim and the event row persist in one transaction, so
+    // concurrent publishes carrying the same idempotency_key cannot both be
+    // routed (spec §14): the unique key is the gate, not a check-then-insert.
+    // A replay (key already claimed by an earlier event) is audited and dropped.
+    const claim =
+      event.idempotencyKey !== undefined
+        ? {
+            key: event.idempotencyKey,
+            kind: isPhysical ? ('physical' as const) : ('publish' as const),
+            nowIso: now,
+          }
+        : undefined;
+    const result = await this.eventsRepo.insert(
+      event,
+      { receivedAt: now, trace: this.trace(now), status },
+      claim,
+    );
+
+    if (result === 'replay') {
+      const originalEventId =
+        event.idempotencyKey !== undefined
+          ? await this.idempotency.existingEventId(event.idempotencyKey)
+          : null;
+      await this.audit.append('idempotent.replay', 'event', event.eventId, {
+        idempotencyKey: event.idempotencyKey,
+        originalEventId,
+      });
+      return;
+    }
+
+    if (taskVerdict !== null) {
+      await this.audit.append(
+        taskVerdict === 'stale' ? 'event.stale' : 'event.task-cancelled',
+        'event',
         event.eventId,
-        isPhysicalEventType(event.eventType, this.registry) ? 'physical' : 'publish',
+        { taskId: gateTaskId, taskVersion: gateTaskVersion },
       );
+      return;
     }
 
     // A physical status `unknown` pauses the causating action (spec §11).

@@ -10,6 +10,7 @@ import { delay } from '../common/delay.js';
 import { HostConfig } from '../config/host-config.js';
 import { loadPackages, type LoadedPackage } from '../package/package-loader.js';
 import { loadApp } from '../app/app-loader.js';
+import type { AppSnapshot } from './startup-snapshot.js';
 import { AgentClasses } from '../adapters/in-process/agent-classes.js';
 import { PackageInstaller } from '../package/package-installer.js';
 import { AppValidator } from '../app/app-validator.js';
@@ -100,8 +101,50 @@ export class HostRuntimeService
     this.registerInProcessAgents();
     this.delivery.init(snapshot);
     await this.delivery.recoverFromMysql();
-    await this.waitForRequiredAgents();
 
+    // Readiness is awaited separately by the entrypoint (main.ts) after the
+    // HTTP server is bound, so external agents can actually reach
+    // /internal/registrations while the host waits for them (spec §4 step 6).
+  }
+
+  /**
+   * Blocks until every required agent holds an active lease, then marks the
+   * app `ready`. Called after the server is listening: required external
+   * agents register through the live registration endpoint. Throws NOT_READY
+   * when the registration window elapses (spec §4 step 8).
+   */
+  async awaitReady(): Promise<void> {
+    const snapshot = this.runtime.current;
+    const required = snapshot.agentIds.filter(
+      (id) => snapshot.agents.get(id)?.required === true,
+    );
+    const isSettled = (): string[] =>
+      required.filter((id) => !this.leases.isActive(id));
+
+    const missing = isSettled();
+    if (missing.length === 0) {
+      this.markReady(snapshot);
+      return;
+    }
+
+    const deadline = this.clock.nowMs() + this.config.registrationWaitTimeoutMs;
+    while (this.clock.nowMs() < deadline) {
+      await delay(500);
+      if (isSettled().length === 0) {
+        this.markReady(snapshot);
+        return;
+      }
+    }
+
+    this.state = 'failed';
+    throw new BusAgentError(
+      'NOT_READY',
+      `Required agents did not register within ${this.config.registrationWaitTimeoutMs}ms: ${isSettled().join(', ')}`,
+      { missingAgents: isSettled(), timeoutMs: this.config.registrationWaitTimeoutMs },
+    );
+  }
+
+  private markReady(snapshot: AppSnapshot): void {
     this.state = 'ready';
     this.logger.log(
       `Host ready (app=${snapshot.appId}, agents=[${snapshot.agentIds.join(', ')}])`,
@@ -123,27 +166,6 @@ export class HostRuntimeService
         this.logger.log(`In-process agent ${agent.agentId} registered via key ${key}`);
       }
     }
-  }
-
-  private async waitForRequiredAgents(): Promise<void> {
-    const snapshot = this.runtime.current;
-    const required = snapshot.agentIds.filter(
-      (id) => snapshot.agents.get(id)?.required === true,
-    );
-    const deadline = this.clock.nowMs() + this.config.registrationWaitTimeoutMs;
-    while (this.clock.nowMs() < deadline) {
-      const missing = required.filter((id) => !this.leases.isActive(id));
-      if (missing.length === 0) {
-        return;
-      }
-      await delay(500);
-    }
-    const missing = required.filter((id) => !this.leases.isActive(id));
-    throw new BusAgentError(
-      'NOT_READY',
-      `Required agents did not register within ${this.config.registrationWaitTimeoutMs}ms: ${missing.join(', ')}`,
-      { missingAgents: missing, timeoutMs: this.config.registrationWaitTimeoutMs },
-    );
   }
 
   private structuredDiagnostic(error: unknown): {
