@@ -1,0 +1,39 @@
+{
+  "schema_version": "1",
+  "package": {
+    "id": "robot-executor-agents",
+    "version": "1.0.0"
+  },
+  "agents": [
+    {
+      "agent_id": "robot.executor",
+      "endpoint": {
+        "adapter": "in-process",
+        "registration_key": "ExampleExecutorAgent"
+      },
+      "consumes": ["plan.created", "robot.execute.requested"],
+      "produces": [
+        "execution.accepted",
+        "execution.started",
+        "execution.completed",
+        "execution.failed",
+        "execution.unknown"
+      ],
+      "configuration_schema": "schemas/executor-config.json",
+      "concurrency": {
+        "mode": "partitioned",
+        "partition_key": "task_id",
+        "limit": 4
+      },
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 0,
+        "dead_letter": true
+      },
+      "permissions": {
+        "context": ["task.*"],
+        "side_effects": ["robot.execute.requested"]
+      }
+    }
+  ]
+}

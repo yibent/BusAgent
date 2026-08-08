@@ -1,0 +1,58 @@
+{
+  "schema_version": "1",
+  "package": {
+    "id": "robot-core-agents",
+    "version": "1.0.0"
+  },
+  "agents": [
+    {
+      "agent_id": "robot.planner",
+      "endpoint": {
+        "adapter": "http",
+        "event_url": "http://planner:8080/v1/events",
+        "health_url": "http://planner:8080/health"
+      },
+      "consumes": ["intent.created", "perception.completed"],
+      "produces": ["plan.created", "plan.failed"],
+      "configuration_schema": "schemas/planner-config.json",
+      "concurrency": {
+        "mode": "partitioned",
+        "partition_key": "task_id",
+        "limit": 8
+      },
+      "retry": {
+        "max_attempts": 3,
+        "backoff_ms": 1000,
+        "dead_letter": true
+      },
+      "permissions": {
+        "context": ["task.*", "perception.*"],
+        "side_effects": []
+      }
+    },
+    {
+      "agent_id": "robot.dialogue",
+      "endpoint": {
+        "adapter": "in-process",
+        "registration_key": "DialogueAgent"
+      },
+      "consumes": ["intent.created", "execution.completed"],
+      "produces": ["reply.created"],
+      "configuration_schema": "schemas/dialogue-config.json",
+      "concurrency": {
+        "mode": "partitioned",
+        "partition_key": "conversation_id",
+        "limit": 16
+      },
+      "retry": {
+        "max_attempts": 2,
+        "backoff_ms": 500,
+        "dead_letter": true
+      },
+      "permissions": {
+        "context": ["conversation.*"],
+        "side_effects": []
+      }
+    }
+  ]
+}

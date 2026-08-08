@@ -2,6 +2,8 @@
 
 本文定义后端运行时的扩展边界。BusAgent 是基于事件的 Agent 宿主，不规定 Agent 使用的模型、提示词框架、编排框架或部署方式。Agent 可以是当前 TypeScript 进程中的类，也可以是通过 HTTP 接入的外部服务。
 
+可直接执行的首版实现规格见 [IMPLEMENTATION_SPEC.md](IMPLEMENTATION_SPEC.md)。
+
 ## 1. 已确定的架构选择
 
 - 使用两类配置文件：Agent Package 和 App；

@@ -2,3 +2,4 @@ allowBuilds:
   '@nestjs/core': false
   '@swc/core': false
   esbuild: false
+  msgpackr-extract: true

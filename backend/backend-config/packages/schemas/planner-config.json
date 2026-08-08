@@ -1,0 +1,11 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "prompt_file": { "type": "string" },
+    "model": { "type": "string" },
+    "max_plan_depth": { "type": "integer", "minimum": 1, "maximum": 16 }
+  },
+  "required": ["prompt_file", "model", "max_plan_depth"],
+  "additionalProperties": true
+}

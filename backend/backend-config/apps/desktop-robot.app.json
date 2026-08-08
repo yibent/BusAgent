@@ -1,0 +1,43 @@
+{
+  "schema_version": "1",
+  "app": {
+    "id": "desktop-robot-assistant",
+    "version": "2026.08"
+  },
+  "agents": [
+    {
+      "agent_id": "robot.planner",
+      "required": true,
+      "config": {
+        "prompt_file": "prompts/planner.md",
+        "model": "configured-by-agent",
+        "max_plan_depth": 8
+      },
+      "retry_override": { "max_attempts": 2 }
+    },
+    {
+      "agent_id": "robot.dialogue",
+      "required": true,
+      "config": {
+        "prompt_file": "prompts/dialogue.md",
+        "language": "zh-CN"
+      }
+    },
+    {
+      "agent_id": "robot.executor",
+      "required": true,
+      "config": {}
+    }
+  ],
+  "routes": [
+    {
+      "event": "intent.created",
+      "to": ["robot.planner", "robot.dialogue"]
+    },
+    {
+      "event": "plan.created",
+      "from": ["robot.planner"],
+      "to": ["robot.executor"]
+    }
+  ]
+}
