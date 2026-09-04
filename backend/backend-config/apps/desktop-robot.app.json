@@ -6,8 +6,21 @@
   },
   "agents": [
     {
-      "agent_id": "robot.planner",
+      "agent_id": "robot.stt",
       "required": true,
+      "config": {
+        "language": "zh",
+        "sample_rate": 16000,
+        "encoding": "pcm",
+        "interim_results": true,
+        "emit_uncommitted": true,
+        "endpointing_ms": 400,
+        "model": "qwen3-asr-flash-realtime"
+      }
+    },
+    {
+      "agent_id": "robot.planner",
+      "required": false,
       "config": {
         "prompt_file": "prompts/planner.md",
         "model": "configured-by-agent",
@@ -20,7 +33,18 @@
       "required": true,
       "config": {
         "prompt_file": "prompts/dialogue.md",
-        "language": "zh-CN"
+        "language": "zh-CN",
+        "model": "qwen-plus"
+      }
+    },
+    {
+      "agent_id": "robot.tts",
+      "required": true,
+      "config": {
+        "model": "qwen3-tts-flash-realtime",
+        "voice": "Cherry",
+        "sample_rate": 24000,
+        "language_type": "Chinese"
       }
     },
     {
@@ -30,6 +54,16 @@
     }
   ],
   "routes": [
+    {
+      "event": "transcript.delta",
+      "from": ["robot.stt"],
+      "to": ["robot.dialogue"]
+    },
+    {
+      "event": "transcript.final",
+      "from": ["robot.stt"],
+      "to": ["robot.dialogue"]
+    },
     {
       "event": "intent.created",
       "to": ["robot.planner", "robot.dialogue"]

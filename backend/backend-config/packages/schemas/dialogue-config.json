@@ -3,7 +3,8 @@
   "type": "object",
   "properties": {
     "prompt_file": { "type": "string" },
-    "language": { "type": "string" }
+    "language": { "type": "string" },
+    "model": { "type": "string" }
   },
   "required": ["prompt_file", "language"],
   "additionalProperties": true

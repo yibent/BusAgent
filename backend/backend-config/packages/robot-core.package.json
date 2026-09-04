@@ -36,7 +36,12 @@
         "adapter": "in-process",
         "registration_key": "DialogueAgent"
       },
-      "consumes": ["intent.created", "execution.completed"],
+      "consumes": [
+        "intent.created",
+        "execution.completed",
+        "transcript.delta",
+        "transcript.final"
+      ],
       "produces": ["reply.created"],
       "configuration_schema": "schemas/dialogue-config.json",
       "concurrency": {
@@ -47,6 +52,54 @@
       "retry": {
         "max_attempts": 2,
         "backoff_ms": 500,
+        "dead_letter": true
+      },
+      "permissions": {
+        "context": ["conversation.*"],
+        "side_effects": []
+      }
+    },
+    {
+      "agent_id": "robot.stt",
+      "endpoint": {
+        "adapter": "in-process",
+        "registration_key": "SttAgent"
+      },
+      "consumes": [],
+      "produces": ["transcript.delta", "transcript.final", "intent.created"],
+      "configuration_schema": "schemas/stt-config.json",
+      "concurrency": {
+        "mode": "partitioned",
+        "partition_key": "stream_id",
+        "limit": 8
+      },
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 0,
+        "dead_letter": true
+      },
+      "permissions": {
+        "context": ["conversation.*"],
+        "side_effects": []
+      }
+    },
+    {
+      "agent_id": "robot.tts",
+      "endpoint": {
+        "adapter": "in-process",
+        "registration_key": "TtsAgent"
+      },
+      "consumes": [],
+      "produces": [],
+      "configuration_schema": "schemas/tts-config.json",
+      "concurrency": {
+        "mode": "partitioned",
+        "partition_key": "conversation_id",
+        "limit": 8
+      },
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 0,
         "dead_letter": true
       },
       "permissions": {

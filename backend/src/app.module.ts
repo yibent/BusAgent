@@ -6,6 +6,7 @@ import { RuntimeModule } from './app/runtime.module.js';
 import { AdaptersModule } from './adapters/adapters.module.js';
 import { BusModule } from './bus/bus.module.js';
 import { RuntimeHostModule } from './app/runtime-host.module.js';
+import { DesktopRobotModule } from './apps/desktop-robot/desktop-robot.module.js';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { RuntimeHostModule } from './app/runtime-host.module.js';
     AdaptersModule,
     BusModule,
     RuntimeHostModule,
+    DesktopRobotModule,
   ],
 })
 export class AppModule {}

@@ -1,23 +1,33 @@
 import 'reflect-metadata';
-import { Logger } from '@nestjs/common';
+import { loadEnv } from './config/load-env.js';
+import { Logger } from './common/logger.js';
+import { NestLogAdapter } from './common/nest-log.adapter.js';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter } from '@nestjs/platform-fastify';
+import type { Server } from 'node:http';
 import { AppModule } from './app.module.js';
 import { HostConfig } from './config/host-config.js';
 import { BusAgentError } from './common/errors.js';
 import { EventIngressService } from './bus/event-ingress.service.js';
 import { RegistrationService } from './registry/registration.service.js';
 import { HostRuntimeService } from './app/host-runtime.service.js';
-import { registerExampleAgents } from './examples/example-agents.js';
+import { AudioGateway } from './modules/stt/audio-gateway.js';
+import { readFrontendFile } from './app/frontend-static.js';
 
 /** Minimal structural view of the Fastify reply used for route registration. */
 interface ReplyLike {
   code(statusCode: number): ReplyLike;
+  type(contentType: string): ReplyLike;
   send(payload: unknown): unknown;
 }
 
 /** Minimal structural view of the Fastify instance (avoids a direct fastify dependency). */
 interface FastifyInstanceLike {
+  server: Server;
+  get(
+    path: string,
+    handler: (request: unknown, reply: ReplyLike) => void | Promise<void>,
+  ): unknown;
   post(
     path: string,
     handler: (request: unknown, reply: ReplyLike) => void | Promise<void>,
@@ -29,31 +39,40 @@ function bodyOf(request: unknown): unknown {
 }
 
 async function bootstrap(): Promise<void> {
+  loadEnv();
+  const bootLog = new Logger('BusAgentHost');
   let config: HostConfig;
   try {
     config = HostConfig.fromEnv(process.env);
   } catch (error) {
-    console.error('BusAgent host failed to load configuration', error);
+    bootLog.fatal('BusAgent host failed to load configuration', error);
     process.exit(1);
   }
 
-  // Example in-process agents for the reference App; replace with real agents.
-  registerExampleAgents();
-
   const app = await NestFactory.create(AppModule, new FastifyAdapter(), {
-    logger: ['error', 'warn', 'log'],
+    logger: new NestLogAdapter(),
   });
   app.enableShutdownHooks();
 
-  // The two public endpoints honor the configurable paths (spec §4, §8).
   const ingress = app.get(EventIngressService);
   const registrations = app.get(RegistrationService);
   const runtime = app.get(HostRuntimeService);
+  const audio = app.get(AudioGateway);
   const fastify = app.getHttpAdapter().getInstance() as unknown as FastifyInstanceLike;
 
-  // The registration endpoint must stay open while the host waits for required
-  // external agents; the event ingress is gated on readiness instead (spec §4
-  // step 8-9: events are routed only once the app is `ready`).
+  const serveFrontend = async (urlPath: string, reply: ReplyLike): Promise<void> => {
+    const file = await readFrontendFile(config.frontendDir, urlPath);
+    if (file === null) {
+      reply.code(404).type('text/plain').send('frontend file not found');
+      return;
+    }
+    reply.type(file.type).send(file.body);
+  };
+  fastify.get('/', async (_request, reply) => serveFrontend('/', reply));
+  fastify.get('/stt', async (_request, reply) => serveFrontend('/stt', reply));
+  fastify.get('/index.html', async (_request, reply) => serveFrontend('/index.html', reply));
+  fastify.get('/styles.css', async (_request, reply) => serveFrontend('/styles.css', reply));
+  fastify.get('/app.js', async (_request, reply) => serveFrontend('/app.js', reply));
   fastify.post(config.eventIngressPath, async (request, reply) => {
     if (runtime.currentState !== 'ready') {
       reply.code(503).send({ error: 'NOT_READY', message: 'host is still starting' });
@@ -67,14 +86,9 @@ async function bootstrap(): Promise<void> {
     reply.code(result.status).send(result.body);
   });
 
-  // Nest's listen() runs the bootstrap hooks before binding the port, so the
-  // readiness wait must happen after the port is up or external agents could
-  // never reach /internal/registrations during the wait.
   await app.listen(config.port, '0.0.0.0');
-  Logger.log(
-    `BusAgent host listening on :${config.port} (ingress=${config.eventIngressPath}, registration=${config.registrationPath})`,
-    'BusAgentHost',
-  );
+  audio.attach(fastify.server, '/v1/stt');
+  bootLog.info(`BusAgent host listening on :${config.port} (ui=/, stt=/v1/stt)`);
 
   await runtime.awaitReady();
 }
@@ -84,6 +98,6 @@ void bootstrap().catch((error: unknown) => {
     error instanceof BusAgentError
       ? `${error.code}: ${error.message}`
       : (error as Error).message;
-  console.error('BusAgent host failed to start:', message);
+  new Logger('BusAgentHost').fatal('BusAgent host failed to start:', message);
   process.exit(1);
 });

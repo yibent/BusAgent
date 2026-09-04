@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { Logger } from '../common/logger.js';
 import { BusAgentError } from '../common/errors.js';
 import { statusForCode } from '../common/http-status.js';
 import { LEASE_TTL_SECONDS, RegistrationSchema } from '../protocol/registration.js';
@@ -18,6 +19,8 @@ export interface HttpResult {
  */
 @Injectable()
 export class RegistrationService {
+  private readonly logger = new Logger('Registration');
+
   constructor(
     private readonly registry: RegistryService,
     private readonly leases: LeaseManager,
@@ -73,12 +76,14 @@ export class RegistrationService {
         instanceVersion: instance_version,
       });
       const status = outcome === 'registered' ? 201 : 200;
+      this.logger.info(`${outcome} ${agent_id} v=${instance_version}`);
       return {
         status,
         body: { agent_id, lease_ttl_seconds: LEASE_TTL_SECONDS, outcome },
       };
     } catch (error) {
       if (error instanceof BusAgentError) {
+        this.logger.warn(`${error.code}: ${error.message}`);
         return {
           status: statusForCode(error.code),
           body: { error: error.code, message: error.message },

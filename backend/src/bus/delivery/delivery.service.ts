@@ -1,4 +1,5 @@
-import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, OnModuleDestroy } from '@nestjs/common';
+import { Logger } from '../../common/logger.js';
 import { Clock } from '../../common/clock.js';
 import { deliveryId } from '../../common/ids.js';
 import type { AppSnapshot } from '../../app/startup-snapshot.js';
@@ -64,6 +65,9 @@ export class DeliveryService implements OnModuleDestroy {
         async (job, error) => this.onFailed(job, error),
       );
     }
+    this.logger.info(
+      `delivery queues ready app=${snapshot.appId} agents=[${snapshot.agentIds.join(', ')}]`,
+    );
   }
 
   /**

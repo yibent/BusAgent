@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BusAgent · 语音助手</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="top">
+        <div>
+          <p class="eyebrow">BusAgent</p>
+          <h1>语音助手</h1>
+        </div>
+        <p id="status" class="status" data-state="idle">就绪</p>
+      </header>
+
+      <main id="thread" class="thread" aria-live="polite">
+        <div class="bubble assistant">
+          你好，我是语音助手。点左侧麦克风说话，也可以直接打字。
+        </div>
+      </main>
+
+      <footer class="composer">
+        <button id="mic" class="mic" type="button" aria-pressed="false" title="语音输入，空格键也可">
+          <span class="mic-ring" id="mic-ring"></span>
+          <span class="mic-core">说</span>
+        </button>
+        <form id="form" class="form">
+          <input
+            id="input"
+            type="text"
+            autocomplete="off"
+            enterkeyhint="send"
+            placeholder="输入消息，或点左侧说话"
+          />
+          <button type="submit">发送</button>
+        </form>
+      </footer>
+    </div>
+    <script src="/app.js"></script>
+  </body>
+</html>

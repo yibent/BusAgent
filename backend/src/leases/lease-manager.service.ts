@@ -1,4 +1,5 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Logger } from '../common/logger.js';
 import { BusAgentError } from '../common/errors.js';
 import { Clock } from '../common/clock.js';
 import {
@@ -25,6 +26,7 @@ export const LEASE_RENEW_INTERVAL_MS = LEASE_RENEW_INTERVAL_SECONDS * 1000;
  */
 @Injectable()
 export class LeaseManager implements OnModuleInit {
+  private readonly logger = new Logger('LeaseManager');
   private readonly leases = new Map<string, LeaseRecord>();
   private readonly inProcess = new Set<string>();
 
@@ -93,6 +95,7 @@ export class LeaseManager implements OnModuleInit {
       };
       this.leases.set(agentId, renewed);
       await this.registrationsRepo.upsert(renewed);
+      this.logger.info(`renewed ${agentId} v=${instanceVersion}`);
       return 'renewed';
     }
     const record: LeaseRecord = {
@@ -105,6 +108,7 @@ export class LeaseManager implements OnModuleInit {
     };
     this.leases.set(agentId, record);
     await this.registrationsRepo.upsert(record);
+    this.logger.info(`registered ${agentId} v=${instanceVersion} url=${endpointUrl}`);
     return 'registered';
   }
 

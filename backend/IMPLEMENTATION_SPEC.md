@@ -9,7 +9,7 @@
 ## 1. 已冻结的决策
 
 - 后端使用 NestJS + Fastify + TypeScript，运行时 Node.js 22；
-- Package 和 App 都是本地 JSON 配置文件；
+- Package 的能力声明是本地 JSON；App 的接线也是 JSON，但 App 是同一进程里的模块，可以带 TypeScript Agent 实现；
 - Package 描述通用 Agent 能力、Endpoint、事件契约、并发和重试策略；
 - App 描述使用哪些 Agent、提示词文件、Agent 配置和允许的事件路由；
 - 配置只在 Host 启动时读取并生成不可变快照，运行期间不热更新；
@@ -18,7 +18,8 @@
 - Agent 可以是进程内 TypeScript 类，也可以是外部 HTTP 服务；
 - HTTP Endpoint URL 直接写入 Package；
 - 不使用 HTTP 身份认证，部署边界内的 Host、Agent 和 MySQL 均视为可信；
-- 所有业务通信都是异步事件，不使用同步业务响应和流式传输；
+- 业务结果仍是异步事件；语音转文字可以把已锁定的短文本以 `transcript.delta` 连续发布；
+- 原始音频不进事件总线，走 Host WebSocket `/v1/stt`，STT 使用通义千问实时识别 `wss://dashscope.aliyuncs.com/api-ws/v1/realtime`（模型 `qwen3-asr-flash-realtime`）；
 - 所有 Agent 都向 Host 的统一 `POST /v1/events` 发布事件；
 - 进程内队列负责投递、延迟重试和并发限制，MySQL 负责持久化事实；
 - 队列粒度为每个 `app_id + agent_id` 一个进程内队列；不使用 Redis 或外部作业队列；
@@ -36,7 +37,7 @@
 - LangChain、LangGraph、CrewAI 或其他 Agent 编排框架；
 - 模型供应商抽象和模型调用客户端；
 - HTTP 身份认证、mTLS、多租户隔离和不可信插件沙箱；
-- WebSocket、SSE、Chunked Response 或任何流式协议；
+- 通用业务路径上的 WebSocket、SSE 或 Chunked Response（音频入口 `/v1/stt` 除外）；
 - 外部消息中间件适配器；
 - ROS 2、DDS、机械臂驱动或真实硬件控制；
 - 运行时配置热加载、灰度切换和在线升级；
@@ -110,9 +111,12 @@ backend-config/
 BUSAGENT_CONFIG_DIR=./backend-config
 BUSAGENT_PACKAGE_DIR=./backend-config/packages
 BUSAGENT_APP_FILE=./backend-config/apps/desktop-robot.app.json
-BUSAGENT_MYSQL_URL=mysql://user:password@127.0.0.1:3306/busagent
+BUSAGENT_MYSQL_URL=mysql://root:root@127.0.0.1:3307/busagent
 BUSAGENT_EVENT_INGRESS_PATH=/v1/events
 BUSAGENT_REGISTRATION_PATH=/internal/registrations
+DASHSCOPE_API_KEY=
+QWEN_STT_WS_URL=wss://dashscope.aliyuncs.com/api-ws/v1/realtime
+QWEN_STT_MODEL=qwen3-asr-flash-realtime
 ```
 
 Host 启动流程：

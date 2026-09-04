@@ -15,6 +15,11 @@ export function newTraceId(): string {
   return `trace_${randomUUID()}`;
 }
 
+/** Stream id for one utterance of streaming speech-to-text. */
+export function newStreamId(): string {
+  return `stream_${randomUUID()}`;
+}
+
 /** Bare UUID used as primary key of persistence rows. */
 export function newUuid(): string {
   return randomUUID();

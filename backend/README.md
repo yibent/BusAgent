@@ -4,6 +4,29 @@
 
 可直接执行的首版实现规格见 [IMPLEMENTATION_SPEC.md](IMPLEMENTATION_SPEC.md)。
 
+## 本地体验
+
+仓库根目录拉起 MySQL：
+
+```bash
+docker compose up -d mysql
+```
+
+默认账号与 Host 配置一致：`root` / `root`，库名 `busagent`，宿主机端口 `3307`（避免和本机 MySQL 抢 3306）。
+
+然后启动 Host，并打开语音助手：
+
+```bash
+cd backend
+export DASHSCOPE_API_KEY=sk-你的key
+export BUSAGENT_MYSQL_URL=mysql://root:root@127.0.0.1:3307/busagent
+pnpm install
+pnpm dev
+```
+
+浏览器打开 [http://localhost:3000/](http://localhost:3000/)。前端文件在仓库 `frontend/`，由 Host 同源托管。
+
+
 ## 1. 已确定的架构选择
 
 - 使用两类配置文件：Agent Package 和 App；
@@ -13,8 +36,8 @@
 - HTTP Agent 不进行应用层身份认证；
 - HTTP Endpoint 直接在 Package 中写 URL；
 - Agent 通信统一采用异步事件模式；
-- 不使用流式传输，不通过 HTTP 请求同步返回业务结果。
-- Package 和 App 只支持本地 JSON 文件，并在 Host 启动时一次性加载；运行期间不热更新配置；
+- 不通过 HTTP 请求同步返回业务结果。语音转文字以短文本事件流式发给下游；原始音频走 `/v1/stt` WebSocket，不进入事件总线。助手语音由 Qwen-TTS 合成，PCM 同样走该 WebSocket，不进入事件总线。
+- Package 接线是本地 JSON；App 是同一进程中的模块，JSON 描述路由，TypeScript 实现 Agent；配置在 Host 启动时一次性加载，运行期间不热更新；
 - 外部服务主动注册并定期续租；一个 `agent_id` 只允许一个活动实例；
 - Event Bus 使用进程内队列负责投递，MySQL 负责配置快照、事件状态和审计；
 - Agent 可以在 App 声明的允许范围内建议下一跳；
@@ -63,6 +86,8 @@ src/
   protocol/        # event envelope、identity、schema、ack、error
   bus/              # event ingress、routing、in-process delivery、retry、cancel
   adapters/         # in-process class、HTTP event delivery
+  modules/          # 可复用能力模块（stt、dialogue）
+  apps/             # App 组合模块（只接线，不实现通用能力）
   context/          # context refs、version、assembly
   supervision/      # policy、permission、approval
   execution/        # resource lease、idempotency、execution credential

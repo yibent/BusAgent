@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { Logger } from '../common/logger.js';
 import { BusAgentError } from '../common/errors.js';
 import { Clock } from '../common/clock.js';
 import { newCorrelationId, newEventId, newTraceId } from '../common/ids.js';
@@ -40,6 +41,8 @@ interface BuildEventInput {
  */
 @Injectable()
 export class EventBus {
+  private readonly logger = new Logger('EventBus');
+
   constructor(
     private readonly clock: Clock,
     private readonly config: HostConfig,
@@ -204,6 +207,7 @@ export class EventBus {
         event.idempotencyKey !== undefined
           ? await this.idempotency.existingEventId(event.idempotencyKey)
           : null;
+      this.logger.info(`idempotent replay event=${event.eventId} original=${originalEventId}`);
       await this.audit.append('idempotent.replay', 'event', event.eventId, {
         idempotencyKey: event.idempotencyKey,
         originalEventId,
@@ -233,9 +237,15 @@ export class EventBus {
 
     const targets = this.router.resolveTargets(event, suggestedTargets);
     if (targets.length === 0) {
+      this.logger.info(
+        `ingest ${event.eventType} id=${event.eventId} from=${event.sourceAgentId} status=${status} targets=[]`,
+      );
       return;
     }
     await this.eventsRepo.markStatus(event.eventId, 'routed');
+    this.logger.info(
+      `ingest ${event.eventType} id=${event.eventId} from=${event.sourceAgentId} -> [${targets.map((t) => t.agentId).join(', ')}]`,
+    );
     await this.scheduler.enqueueAll(event, targets);
   }
 

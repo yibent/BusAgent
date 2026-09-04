@@ -97,6 +97,18 @@ BusAgent 重点解决：
 - [术语表](docs/glossary.md)：核心概念的统一定义；
 - [架构决策 ADR-0001](docs/adr/0001-bus-oriented-agent-architecture.md)：为什么采用总线式架构。
 
+## 本地体验
+
+```bash
+docker compose up -d mysql
+cd backend
+export DASHSCOPE_API_KEY=sk-你的key
+pnpm install
+pnpm dev
+```
+
+打开 [http://localhost:3000/](http://localhost:3000/) 体验流式语音转文字。说明见 [frontend/README.md](frontend/README.md)。
+
 ## 项目阶段
 
 项目当前处于 **Phase 0：概念与协议设计**。近期目标不是快速堆叠节点数量，而是先验证三件事：

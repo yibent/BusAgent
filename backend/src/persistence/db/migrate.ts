@@ -1,3 +1,5 @@
+import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Logger } from '../../common/logger.js';
 import type { RowDataPacket } from 'mysql2';
 import { toMysqlDatetime } from './mysql-datetime.js';
 import { DatabaseConnection } from './client.js';
@@ -5,17 +7,11 @@ import { DatabaseConnection } from './client.js';
 interface Migration {
   version: number;
   name: string;
-  sql: string;
+  statements: string[];
 }
 
-const INITIAL_SCHEMA = `
-CREATE TABLE IF NOT EXISTS busagent_migrations (
-  version INT PRIMARY KEY,
-  name VARCHAR(128) NOT NULL,
-  applied_at DATETIME(3) NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS busagent_config_snapshots (
+const INITIAL_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS busagent_config_snapshots (
   id VARCHAR(64) PRIMARY KEY,
   snapshot_type VARCHAR(16) NOT NULL,
   entity_key VARCHAR(255) NOT NULL,
@@ -24,9 +20,8 @@ CREATE TABLE IF NOT EXISTS busagent_config_snapshots (
   payload JSON NOT NULL,
   created_at DATETIME(3) NOT NULL,
   INDEX idx_snapshots_type (snapshot_type, entity_key)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS busagent_agents (
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS busagent_agents (
   agent_id VARCHAR(128) PRIMARY KEY,
   package_id VARCHAR(128) NOT NULL,
   package_version VARCHAR(64) NOT NULL,
@@ -40,18 +35,16 @@ CREATE TABLE IF NOT EXISTS busagent_agents (
   permissions JSON NOT NULL,
   registration_key VARCHAR(128) NULL,
   installed_at DATETIME(3) NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS busagent_registrations (
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS busagent_registrations (
   agent_id VARCHAR(128) PRIMARY KEY,
   endpoint_url VARCHAR(512) NOT NULL,
   instance_version VARCHAR(64) NOT NULL,
   lease_expires_at DATETIME(3) NOT NULL,
   registered_at DATETIME(3) NOT NULL,
   last_renewed_at DATETIME(3) NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS busagent_events (
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS busagent_events (
   event_id VARCHAR(128) PRIMARY KEY,
   event_type VARCHAR(128) NOT NULL,
   app_id VARCHAR(128) NOT NULL,
@@ -72,9 +65,8 @@ CREATE TABLE IF NOT EXISTS busagent_events (
   INDEX idx_events_task (task_id),
   INDEX idx_events_correlation (correlation_id),
   INDEX idx_events_status (status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS busagent_deliveries (
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS busagent_deliveries (
   id VARCHAR(255) PRIMARY KEY,
   event_id VARCHAR(128) NOT NULL,
   app_id VARCHAR(128) NOT NULL,
@@ -91,25 +83,22 @@ CREATE TABLE IF NOT EXISTS busagent_deliveries (
   INDEX idx_deliveries_event (event_id),
   INDEX idx_deliveries_status (status),
   INDEX idx_deliveries_queue (queue_name)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS busagent_tasks (
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS busagent_tasks (
   task_id VARCHAR(128) PRIMARY KEY,
   app_id VARCHAR(128) NOT NULL,
   current_version INT NOT NULL,
   state VARCHAR(24) NOT NULL,
   created_at DATETIME(3) NOT NULL,
   updated_at DATETIME(3) NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS busagent_idempotency (
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS busagent_idempotency (
   idempotency_key VARCHAR(128) PRIMARY KEY,
   event_id VARCHAR(128) NOT NULL,
   kind VARCHAR(24) NOT NULL,
   created_at DATETIME(3) NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS busagent_dead_letters (
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS busagent_dead_letters (
   id VARCHAR(64) PRIMARY KEY,
   event_id VARCHAR(128) NOT NULL,
   app_id VARCHAR(128) NOT NULL,
@@ -119,22 +108,24 @@ CREATE TABLE IF NOT EXISTS busagent_dead_letters (
   status VARCHAR(16) NOT NULL,
   created_at DATETIME(3) NOT NULL,
   redelivered_at DATETIME(3) NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS busagent_audit_log (
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS busagent_audit_log (
   id VARCHAR(64) PRIMARY KEY,
   action VARCHAR(64) NOT NULL,
   entity_type VARCHAR(32) NOT NULL,
   entity_id VARCHAR(128) NOT NULL,
   detail_json JSON NULL,
   created_at DATETIME(3) NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-`;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+];
 
-const MIGRATIONS: Migration[] = [{ version: 1, name: 'init', sql: INITIAL_SCHEMA }];
+const MIGRATIONS: Migration[] = [{ version: 1, name: 'init', statements: INITIAL_STATEMENTS }];
 
 /** Applies versioned migrations; MySQL is the source of truth for recovery. */
+@Injectable()
 export class MigrationRunner {
+  private readonly logger = new Logger('MigrationRunner');
+
   constructor(private readonly db: DatabaseConnection) {}
 
   async up(): Promise<void> {
@@ -152,13 +143,28 @@ export class MigrationRunner {
       );
       const applied = rows as RowDataPacket[];
       if (applied.length > 0) {
+        this.logger.debug(`migration ${migration.version} ${migration.name} already applied`);
         continue;
       }
-      await this.db.pool.query(migration.sql);
+      this.logger.info(`applying migration ${migration.version} ${migration.name}`);
+      for (const statement of migration.statements) {
+        await this.db.pool.query(statement);
+      }
       await this.db.pool.query(
         'INSERT INTO busagent_migrations (version, name, applied_at) VALUES (?, ?, ?)',
         [migration.version, migration.name, toMysqlDatetime(new Date().toISOString())],
       );
+      this.logger.info(`applied migration ${migration.version} ${migration.name}`);
     }
+  }
+}
+
+/** Runs schema migrations before any other module reads MySQL. */
+@Injectable()
+export class SchemaBootstrap implements OnModuleInit {
+  constructor(private readonly migrations: MigrationRunner) {}
+
+  async onModuleInit(): Promise<void> {
+    await this.migrations.up();
   }
 }

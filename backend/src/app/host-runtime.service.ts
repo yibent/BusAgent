@@ -1,9 +1,9 @@
 import {
   Injectable,
-  Logger,
   OnApplicationBootstrap,
   OnApplicationShutdown,
 } from '@nestjs/common';
+import { Logger } from '../common/logger.js';
 import { BusAgentError } from '../common/errors.js';
 import { Clock } from '../common/clock.js';
 import { delay } from '../common/delay.js';
@@ -68,7 +68,7 @@ export class HostRuntimeService
 
   async onApplicationShutdown(signal?: string): Promise<void> {
     this.state = 'stopping';
-    this.logger.log(`Host shutting down (signal=${signal ?? 'unknown'})`);
+    this.logger.info(`Host shutting down (signal=${signal ?? 'unknown'})`);
     await this.delivery.shutdown();
     await this.db.close().catch(() => undefined);
   }
@@ -78,11 +78,13 @@ export class HostRuntimeService
   }
 
   private async start(): Promise<void> {
-    this.logger.log('BusAgent host starting');
+    this.logger.info('BusAgent host starting');
 
     await this.migrations.up();
+    this.logger.info('database schema ready');
 
     const packages: LoadedPackage[] = await loadPackages(this.config.packageDir);
+    this.logger.info(`loaded ${packages.length} package(s)`);
     this.installer.installAll(packages);
 
     const resolved = await loadApp(this.config.appFile);
@@ -143,7 +145,7 @@ export class HostRuntimeService
 
   private markReady(snapshot: AppSnapshot): void {
     this.state = 'ready';
-    this.logger.log(
+    this.logger.info(
       `Host ready (app=${snapshot.appId}, agents=[${snapshot.agentIds.join(', ')}])`,
     );
   }
@@ -160,7 +162,7 @@ export class HostRuntimeService
           );
         }
         this.leases.registerInProcess(agent.agentId);
-        this.logger.log(`In-process agent ${agent.agentId} registered via key ${key}`);
+        this.logger.info(`In-process agent ${agent.agentId} registered via key ${key}`);
       }
     }
   }
