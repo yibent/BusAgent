@@ -7,8 +7,6 @@ export interface TtsHandlers {
 
 export interface TtsConnection {
   appendText(text: string): void;
-  commit(): void;
-  clear(): void;
   finish(): void;
   close(): void;
 }

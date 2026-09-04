@@ -13,7 +13,6 @@ export interface SttHandlers {
 
 export interface SttConnection {
   sendAudio(chunk: Buffer): void;
-  finalize(): void;
   done(): void;
   close(): void;
 }

@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Logger } from '../../common/logger.js';
 import {
   AgentClasses,
@@ -10,6 +10,7 @@ import {
 import { HostConfig } from '../../config/host-config.js';
 import { isPathInside } from '../../common/path-safety.js';
 import { ConversationHub } from '../conversation/conversation-hub.js';
+import { ConversationInterruptions } from '../conversation/conversation-interruptions.js';
 import { TtsAgent } from '../tts/tts-agent.js';
 import { streamQwenChat, type ChatMessage } from './qwen-chat.js';
 
@@ -40,23 +41,41 @@ function isAbortError(error: unknown): boolean {
  * streams a Qwen reply to the live session and publishes `reply.created`.
  */
 @Injectable()
-export class DialogueAgent implements InProcessAgent, OnModuleInit {
+export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDestroy {
   readonly registrationKey = DIALOGUE_REGISTRATION_KEY;
   private readonly logger = new Logger(DialogueAgent.name);
   private readonly histories = new Map<string, ChatMessage[]>();
   private readonly generation = new Map<string, number>();
   private readonly abort = new Map<string, AbortController>();
+  private unsubscribeInterruptions: (() => void) | undefined;
 
   constructor(
     private readonly hostConfig: HostConfig,
     private readonly hub: ConversationHub,
     private readonly tts: TtsAgent,
+    private readonly interruptions: ConversationInterruptions,
   ) {}
 
   onModuleInit(): void {
     if (!AgentClasses.has(this.registrationKey)) {
       AgentClasses.register(this.registrationKey, this);
     }
+    this.unsubscribeInterruptions ??= this.interruptions.subscribe((conversationId) => {
+      this.interrupt(conversationId);
+    });
+  }
+
+  onModuleDestroy(): void {
+    this.unsubscribeInterruptions?.();
+    this.unsubscribeInterruptions = undefined;
+  }
+
+  private interrupt(conversationId: string): void {
+    this.abort.get(conversationId)?.abort();
+    this.abort.delete(conversationId);
+    this.generation.set(conversationId, (this.generation.get(conversationId) ?? 0) + 1);
+    this.tts.interrupt(conversationId);
+    this.logger.info(`reply interrupted by user conv=${conversationId}`);
   }
 
   async handle(context: InProcessEventContext): Promise<void> {

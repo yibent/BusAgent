@@ -9,7 +9,8 @@ import { BusAgentError } from '../../common/errors.js';
 import { newCorrelationId, newStreamId } from '../../common/ids.js';
 import { HostConfig } from '../../config/host-config.js';
 import { RuntimeState } from '../../app/runtime-state.service.js';
-import { SpeechGate } from '../conversation/speech-gate.js';
+import { ConversationInterruptions } from '../conversation/conversation-interruptions.js';
+import { SpeechGate, speechContentLength } from '../conversation/speech-gate.js';
 import { TranscriptDeltaEncoder } from './transcript-delta.js';
 import { defaultSttStreamFactory } from './qwen-stt-stream.js';
 import type { SttConnection, SttStreamFactory } from './stt-types.js';
@@ -38,7 +39,13 @@ interface Session {
   encoder: TranscriptDeltaEncoder;
   connection: SttConnection;
   emitUncommitted: boolean;
+  utteranceSettleMs: number;
+  bargeInMinChars: number;
   listener: SttSessionListener;
+  pendingFinalText: string;
+  settleTimer: ReturnType<typeof setTimeout> | undefined;
+  forceFlush: boolean;
+  work: Promise<void>;
   closed: boolean;
 }
 
@@ -58,6 +65,15 @@ function asInt(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? Math.trunc(value) : fallback;
 }
 
+function joinUtteranceParts(current: string, next: string): string {
+  const left = current.trim();
+  const right = next.trim();
+  if (left.length === 0) return right;
+  if (right.length === 0) return left;
+  const needsSpace = /[A-Za-z0-9]$/.test(left) && /^[A-Za-z0-9]/.test(right);
+  return `${left}${needsSpace ? ' ' : ''}${right}`;
+}
+
 /**
  * Speech-to-text module. Audio stays off the bus; this agent talks to Qwen-ASR
  * Realtime and publishes short text events for any downstream agent.
@@ -74,6 +90,7 @@ export class SttAgent implements InProcessAgent, OnModuleInit {
     private readonly hostConfig: HostConfig,
     private readonly runtime: RuntimeState,
     private readonly gate: SpeechGate,
+    private readonly interruptions: ConversationInterruptions,
     @Inject(STT_STREAM_FACTORY)
     private readonly connect: SttStreamFactory,
   ) {}
@@ -108,6 +125,11 @@ export class SttAgent implements InProcessAgent, OnModuleInit {
     const emitUncommitted =
       input.emitUncommitted ?? asBool(configValue(agentConfig, 'emit_uncommitted'), true);
     const endpointingMs = asInt(configValue(agentConfig, 'endpointing_ms'), 400);
+    const utteranceSettleMs = asInt(
+      configValue(agentConfig, 'utterance_settle_ms'),
+      900,
+    );
+    const bargeInMinChars = asInt(configValue(agentConfig, 'barge_in_min_chars'), 3);
     const model = asString(configValue(agentConfig, 'model'), this.hostConfig.qwenSttModel);
 
     const streamId = newStreamId();
@@ -119,7 +141,13 @@ export class SttAgent implements InProcessAgent, OnModuleInit {
       correlationId,
       encoder,
       emitUncommitted,
+      utteranceSettleMs,
+      bargeInMinChars,
       listener,
+      pendingFinalText: '',
+      settleTimer: undefined,
+      forceFlush: false,
+      work: Promise.resolve(),
       closed: false,
       connection: this.connect(
         {
@@ -136,10 +164,17 @@ export class SttAgent implements InProcessAgent, OnModuleInit {
             this.logger.info(`STT stream ready ${streamId}`);
           },
           onPartial: (partial) => {
-            void this.onPartial(session, partial.text, partial.isFinal, partial.speechFinal);
+            this.cancelSettleTimer(session);
+            this.enqueue(session, () =>
+              this.onPartial(session, partial.text, partial.isFinal, partial.speechFinal),
+            );
           },
           onDone: () => {
-            this.closeSession(streamId);
+            this.cancelSettleTimer(session);
+            this.enqueue(session, async () => {
+              await this.flushPending(session);
+              this.closeSession(streamId);
+            });
           },
           onError: (error) => {
             this.logger.error(`STT stream ${streamId} failed: ${error.message}`);
@@ -158,11 +193,20 @@ export class SttAgent implements InProcessAgent, OnModuleInit {
   }
 
   finalize(streamId: string): void {
-    this.sessions.get(streamId)?.connection.finalize();
+    const session = this.sessions.get(streamId);
+    if (session === undefined) return;
+    session.forceFlush = true;
+    if (session.pendingFinalText.length > 0) {
+      this.cancelSettleTimer(session);
+      this.enqueue(session, () => this.flushPending(session));
+    }
   }
 
   endSession(streamId: string): void {
-    this.sessions.get(streamId)?.connection.done();
+    const session = this.sessions.get(streamId);
+    if (session === undefined) return;
+    session.forceFlush = true;
+    session.connection.done();
   }
 
   closeSession(streamId: string): void {
@@ -171,6 +215,7 @@ export class SttAgent implements InProcessAgent, OnModuleInit {
       return;
     }
     session.closed = true;
+    this.cancelSettleTimer(session);
     session.connection.close();
     this.sessions.delete(streamId);
   }
@@ -185,8 +230,19 @@ export class SttAgent implements InProcessAgent, OnModuleInit {
       return;
     }
     if (this.gate.isBlocked(session.correlationId)) {
+      const longEnough = speechContentLength(text) >= session.bargeInMinChars;
+      if (!longEnough || this.gate.isLikelyEcho(session.correlationId, text)) {
+        session.encoder.reset();
+        session.pendingFinalText = '';
+        return;
+      }
+      this.gate.interrupt(session.correlationId);
+      this.interruptions.interrupt(session.correlationId);
       session.encoder.reset();
-      return;
+      session.pendingFinalText = '';
+      this.logger.info(
+        `human barge-in detected conv=${session.correlationId} chars=${speechContentLength(text)}`,
+      );
     }
     const tick = session.encoder.push(text, isFinal, speechFinal);
     for (const delta of tick.deltas) {
@@ -203,18 +259,54 @@ export class SttAgent implements InProcessAgent, OnModuleInit {
       session.listener.onDelta?.(payload);
     }
     if (tick.finalText !== null && tick.finalText.trim().length > 0) {
-      const finalPayload = {
-        stream_id: session.streamId,
-        text: tick.finalText,
-      };
-      await this.publish(session, 'transcript.final', finalPayload);
-      await this.publish(session, 'intent.created', {
-        text: tick.finalText,
-        stream_id: session.streamId,
-        source: 'stt',
-      });
-      session.listener.onFinal?.(finalPayload);
+      session.pendingFinalText = joinUtteranceParts(
+        session.pendingFinalText,
+        tick.finalText,
+      );
+      this.scheduleSettledFinal(session);
     }
+  }
+
+  private scheduleSettledFinal(session: Session): void {
+    this.cancelSettleTimer(session);
+    const delay = session.forceFlush ? 0 : session.utteranceSettleMs;
+    session.settleTimer = setTimeout(() => {
+      session.settleTimer = undefined;
+      this.enqueue(session, () => this.flushPending(session));
+    }, Math.max(0, delay));
+  }
+
+  private cancelSettleTimer(session: Session): void {
+    if (session.settleTimer === undefined) return;
+    clearTimeout(session.settleTimer);
+    session.settleTimer = undefined;
+  }
+
+  private enqueue(session: Session, operation: () => Promise<void>): void {
+    session.work = session.work.then(operation).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`STT stream ${session.streamId} processing failed: ${message}`);
+      session.listener.onError?.(error instanceof Error ? error : new Error(message));
+      this.closeSession(session.streamId);
+    });
+  }
+
+  private async flushPending(session: Session): Promise<void> {
+    if (session.closed) return;
+    const text = session.pendingFinalText.trim();
+    if (text.length === 0) return;
+    session.pendingFinalText = '';
+    const finalPayload = {
+      stream_id: session.streamId,
+      text,
+    };
+    await this.publish(session, 'transcript.final', finalPayload);
+    await this.publish(session, 'intent.created', {
+      text,
+      stream_id: session.streamId,
+      source: 'stt',
+    });
+    session.listener.onFinal?.(finalPayload);
   }
 
   private async publish(

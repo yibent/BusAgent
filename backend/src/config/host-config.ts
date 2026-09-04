@@ -25,7 +25,6 @@ const EnvSchema = z.object({
   QWEN_TTS_WS_URL: z.string().url().optional(),
   QWEN_TTS_MODEL: z.string().min(1).optional(),
   QWEN_TTS_VOICE: z.string().min(1).optional(),
-  BUSAGENT_FRONTEND_DIR: z.string().min(1).optional(),
 });
 
 /** Immutable host configuration parsed once at startup (spec §4). */
@@ -47,7 +46,6 @@ export class HostConfig {
   readonly qwenTtsWsUrl: string;
   readonly qwenTtsModel: string;
   readonly qwenTtsVoice: string;
-  readonly frontendDir: string;
 
   private constructor(values: {
     configDir: string;
@@ -67,7 +65,6 @@ export class HostConfig {
     qwenTtsWsUrl: string;
     qwenTtsModel: string;
     qwenTtsVoice: string;
-    frontendDir: string;
   }) {
     this.configDir = values.configDir;
     this.packageDir = values.packageDir;
@@ -86,7 +83,6 @@ export class HostConfig {
     this.qwenTtsWsUrl = values.qwenTtsWsUrl;
     this.qwenTtsModel = values.qwenTtsModel;
     this.qwenTtsVoice = values.qwenTtsVoice;
-    this.frontendDir = values.frontendDir;
   }
 
   static fromEnv(env: NodeJS.ProcessEnv = process.env): HostConfig {
@@ -128,7 +124,6 @@ export class HostConfig {
       qwenTtsWsUrl: e.QWEN_TTS_WS_URL ?? 'wss://dashscope.aliyuncs.com/api-ws/v1/realtime',
       qwenTtsModel: e.QWEN_TTS_MODEL ?? 'qwen3-tts-flash-realtime',
       qwenTtsVoice: e.QWEN_TTS_VOICE ?? 'Cherry',
-      frontendDir: resolve(e.BUSAGENT_FRONTEND_DIR ?? join('..', 'frontend')),
     });
   }
 }

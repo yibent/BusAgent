@@ -21,7 +21,6 @@ interface Session {
   sampleRate: number;
   connection: TtsConnection;
   ready: Promise<void>;
-  appended: boolean;
   started: boolean;
   closed: boolean;
 }
@@ -65,6 +64,7 @@ export class TtsAgent implements InProcessAgent, OnModuleInit {
 
   startTurn(conversationId: string, turn: number): void {
     this.cancel(conversationId);
+    this.gate.startAssistantTurn(conversationId);
     const apiKey = this.hostConfig.dashscopeApiKey;
     if (apiKey === undefined) {
       this.logger.warn('DASHSCOPE_API_KEY is required for Qwen TTS');
@@ -90,7 +90,6 @@ export class TtsAgent implements InProcessAgent, OnModuleInit {
       turn,
       sampleRate,
       ready,
-      appended: false,
       started: false,
       closed: false,
       connection: this.connect(
@@ -135,9 +134,9 @@ export class TtsAgent implements InProcessAgent, OnModuleInit {
     if (text.length === 0) {
       return;
     }
+    this.gate.appendAssistantText(conversationId, text);
     void this.sendWhenReady(session, () => {
       session.connection.appendText(text);
-      session.appended = true;
     });
   }
 
@@ -147,25 +146,26 @@ export class TtsAgent implements InProcessAgent, OnModuleInit {
       return;
     }
     await this.sendWhenReady(session, () => {
-      if (session.appended) {
-        session.connection.commit();
-      }
       session.connection.finish();
     });
   }
 
   cancel(conversationId: string): void {
+    this.stop(conversationId, false);
+  }
+
+  interrupt(conversationId: string): void {
+    this.stop(conversationId, true);
+  }
+
+  private stop(conversationId: string, interrupted: boolean): void {
     const session = this.sessions.get(conversationId);
     if (session === undefined || session.closed) {
       return;
     }
-    try {
-      session.connection.clear();
-      session.connection.finish();
-    } catch {
-      // Closing is best-effort.
-    }
-    this.closeSession(conversationId, session.turn);
+    // Abruptly close the stream. In server_commit mode, clear is invalid and
+    // session.finish would return buffered audio that the user just interrupted.
+    this.closeSession(conversationId, session.turn, interrupted);
   }
 
   private async sendWhenReady(session: Session, write: () => void): Promise<void> {
@@ -206,7 +206,7 @@ export class TtsAgent implements InProcessAgent, OnModuleInit {
     });
   }
 
-  private closeSession(conversationId: string, turn: number): void {
+  private closeSession(conversationId: string, turn: number, interrupted = false): void {
     const session = this.sessions.get(conversationId);
     if (session === undefined || session.turn !== turn || session.closed) {
       return;
@@ -215,7 +215,9 @@ export class TtsAgent implements InProcessAgent, OnModuleInit {
     session.connection.close();
     this.sessions.delete(conversationId);
     if (session.started) {
-      this.gate.extendPlayback(conversationId, 800);
+      if (!interrupted) {
+        this.gate.extendPlayback(conversationId, 800);
+      }
       this.hub.publish(conversationId, { type: 'speech.done', turn });
     }
   }

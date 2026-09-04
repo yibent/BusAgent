@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DialogueAgent } from '../src/modules/dialogue/dialogue-agent.js';
 import { ConversationHub } from '../src/modules/conversation/conversation-hub.js';
+import { ConversationInterruptions } from '../src/modules/conversation/conversation-interruptions.js';
 import { HostConfig } from '../src/config/host-config.js';
 import type { TtsAgent } from '../src/modules/tts/tts-agent.js';
 import { makeEvent } from './helpers.js';
@@ -71,11 +72,13 @@ describe('DialogueAgent', () => {
       append: vi.fn(),
       finishTurn: vi.fn(() => Promise.resolve()),
       cancel: vi.fn(),
+      interrupt: vi.fn(),
     };
     const agent = new DialogueAgent(
       HostConfig.fromEnv({ DASHSCOPE_API_KEY: 'test-key' }),
       hub,
       tts as unknown as TtsAgent,
+      new ConversationInterruptions(hub),
     );
     const published: unknown[] = [];
     await agent.handle(context(agent, hub, published));
@@ -103,7 +106,9 @@ describe('DialogueAgent', () => {
         append: vi.fn(),
         finishTurn: vi.fn(() => Promise.resolve()),
         cancel: vi.fn(),
+        interrupt: vi.fn(),
       } as unknown as TtsAgent,
+      new ConversationInterruptions(hub),
     );
     await agent.handle({
       event: makeEvent({ eventType: 'transcript.delta', payload: { text: 'x' } }),
@@ -117,5 +122,29 @@ describe('DialogueAgent', () => {
       publish: () => Promise.resolve(),
     });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('cancels TTS when a human interruption is reported', () => {
+    const hub = new ConversationHub();
+    const interruptions = new ConversationInterruptions(hub);
+    const tts = {
+      startTurn: vi.fn(),
+      append: vi.fn(),
+      finishTurn: vi.fn(() => Promise.resolve()),
+      cancel: vi.fn(),
+      interrupt: vi.fn(),
+    };
+    const agent = new DialogueAgent(
+      HostConfig.fromEnv({ DASHSCOPE_API_KEY: 'test-key' }),
+      hub,
+      tts as unknown as TtsAgent,
+      interruptions,
+    );
+    agent.onModuleInit();
+
+    interruptions.interrupt('corr_chat');
+
+    expect(tts.interrupt).toHaveBeenCalledWith('corr_chat');
+    agent.onModuleDestroy();
   });
 });

@@ -146,12 +146,6 @@ export function connectQwenTts(
         text,
       });
     },
-    commit(): void {
-      sendJson({ event_id: eventId(), type: 'input_text_buffer.commit' });
-    },
-    clear(): void {
-      sendJson({ event_id: eventId(), type: 'input_text_buffer.clear' });
-    },
     finish(): void {
       sendJson({ event_id: eventId(), type: 'session.finish' });
     },

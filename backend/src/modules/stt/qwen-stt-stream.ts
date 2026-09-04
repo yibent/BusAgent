@@ -182,9 +182,6 @@ export function connectQwenStt(
       }
       sendAudioFrame(chunk);
     },
-    finalize(): void {
-      sendJson({ event_id: eventId(), type: 'input_audio_buffer.commit' });
-    },
     done(): void {
       sendJson({ event_id: eventId(), type: 'session.finish' });
     },

@@ -7,7 +7,9 @@
     "encoding": { "type": "string" },
     "interim_results": { "type": "boolean" },
     "emit_uncommitted": { "type": "boolean" },
-    "endpointing_ms": { "type": "integer" },
+    "endpointing_ms": { "type": "integer", "minimum": 100, "maximum": 5000 },
+    "utterance_settle_ms": { "type": "integer", "minimum": 0, "maximum": 5000 },
+    "barge_in_min_chars": { "type": "integer", "minimum": 1, "maximum": 20 },
     "model": { "type": "string" }
   },
   "additionalProperties": true

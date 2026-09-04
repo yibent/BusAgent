@@ -25,4 +25,13 @@ describe('SpeechGate', () => {
     gate.playbackEnded('c1', 0);
     expect(gate.isBlocked('c1')).toBe(false);
   });
+
+  it('recognizes assistant text while allowing unrelated human speech', () => {
+    const gate = new SpeechGate();
+    gate.startAssistantTurn('c1');
+    gate.appendAssistantText('c1', '今天下午可以先去开会，然后整理材料。');
+
+    expect(gate.isLikelyEcho('c1', '先去开会然后整理资料')).toBe(true);
+    expect(gate.isLikelyEcho('c1', '等一下')).toBe(false);
+  });
 });

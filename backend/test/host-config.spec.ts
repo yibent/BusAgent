@@ -16,7 +16,6 @@ describe('HostConfig.fromEnv', () => {
     );
     expect(config.qwenTtsModel).toBe('qwen3-tts-flash-realtime');
     expect(config.qwenTtsVoice).toBe('Cherry');
-    expect(config.frontendDir.endsWith('frontend')).toBe(true);
   });
 
   it('honours explicit environment values', () => {

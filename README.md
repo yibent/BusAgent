@@ -107,7 +107,15 @@ pnpm install
 pnpm dev
 ```
 
-打开 [http://localhost:3000/](http://localhost:3000/) 体验流式语音转文字。说明见 [frontend/README.md](frontend/README.md)。
+后端不托管前端页面。另开一个终端启动 React 前端：
+
+```bash
+cd frontend
+pnpm install
+pnpm dev
+```
+
+打开 [http://localhost:5173/](http://localhost:5173/) 进入 App 首页。详细说明见 [frontend/README.md](frontend/README.md)。
 
 ## 项目阶段
 
