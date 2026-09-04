@@ -6,14 +6,61 @@
   },
   "agents": [
     {
-      "agent_id": "robot.planner",
+      "agent_id": "robot.instruction_understanding",
       "endpoint": {
-        "adapter": "http",
-        "event_url": "http://planner:8080/v1/events",
-        "health_url": "http://planner:8080/health"
+        "adapter": "in-process",
+        "registration_key": "InstructionUnderstandingNode"
       },
-      "consumes": ["intent.created", "perception.completed"],
-      "produces": ["plan.created", "plan.failed"],
+      "consumes": ["intent.created"],
+      "produces": ["instruction.parsed"],
+      "configuration_schema": "schemas/instruction-config.json",
+      "concurrency": {
+        "mode": "partitioned",
+        "partition_key": "conversation_id",
+        "limit": 16
+      },
+      "retry": {
+        "max_attempts": 2,
+        "backoff_ms": 200,
+        "dead_letter": true
+      },
+      "permissions": {
+        "context": ["conversation.*", "task.*"],
+        "side_effects": []
+      }
+    },
+    {
+      "agent_id": "robot.grounding_clarification",
+      "endpoint": {
+        "adapter": "in-process",
+        "registration_key": "GroundingClarificationNode"
+      },
+      "consumes": ["instruction.parsed", "scene.snapshot.updated"],
+      "produces": ["command.grounded", "clarification.requested"],
+      "configuration_schema": "schemas/grounding-config.json",
+      "concurrency": {
+        "mode": "partitioned",
+        "partition_key": "task_id",
+        "limit": 8
+      },
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 0,
+        "dead_letter": true
+      },
+      "permissions": {
+        "context": ["task.*", "conversation.*", "scene.*"],
+        "side_effects": []
+      }
+    },
+    {
+      "agent_id": "robot.task_planner",
+      "endpoint": {
+        "adapter": "in-process",
+        "registration_key": "TaskPlannerNode"
+      },
+      "consumes": ["command.grounded", "perception.completed"],
+      "produces": ["plan.proposed", "plan.failed"],
       "configuration_schema": "schemas/planner-config.json",
       "concurrency": {
         "mode": "partitioned",
@@ -31,6 +78,78 @@
       }
     },
     {
+      "agent_id": "robot.loop_router",
+      "endpoint": {
+        "adapter": "in-process",
+        "registration_key": "LoopRouterNode"
+      },
+      "consumes": ["plan.validated"],
+      "produces": ["execution.profile.selected"],
+      "configuration_schema": "schemas/loop-router-config.json",
+      "concurrency": {
+        "mode": "partitioned",
+        "partition_key": "task_id",
+        "limit": 8
+      },
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 0,
+        "dead_letter": true
+      },
+      "permissions": {
+        "context": ["task.*", "scene.*"],
+        "side_effects": []
+      }
+    },
+    {
+      "agent_id": "robot.plan_validator",
+      "endpoint": {
+        "adapter": "in-process",
+        "registration_key": "PlanValidatorNode"
+      },
+      "consumes": ["plan.proposed"],
+      "produces": ["plan.validated", "plan.rejected"],
+      "configuration_schema": "schemas/plan-validator-config.json",
+      "concurrency": {
+        "mode": "partitioned",
+        "partition_key": "task_id",
+        "limit": 8
+      },
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 0,
+        "dead_letter": true
+      },
+      "permissions": {
+        "context": ["task.*"],
+        "side_effects": []
+      }
+    },
+    {
+      "agent_id": "robot.interrupt_monitor",
+      "endpoint": {
+        "adapter": "in-process",
+        "registration_key": "InterruptMonitorNode"
+      },
+      "consumes": ["transcript.delta", "transcript.final"],
+      "produces": ["interrupt.requested"],
+      "configuration_schema": "schemas/interrupt-monitor-config.json",
+      "concurrency": {
+        "mode": "partitioned",
+        "partition_key": "conversation_id",
+        "limit": 16
+      },
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 0,
+        "dead_letter": true
+      },
+      "permissions": {
+        "context": ["conversation.*", "task.*"],
+        "side_effects": []
+      }
+    },
+    {
       "agent_id": "robot.dialogue",
       "endpoint": {
         "adapter": "in-process",
@@ -39,6 +158,10 @@
       "consumes": [
         "intent.created",
         "execution.completed",
+        "execution.failed",
+        "execution.unknown",
+        "clarification.requested",
+        "plan.rejected",
         "transcript.delta",
         "transcript.final"
       ],

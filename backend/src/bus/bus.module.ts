@@ -15,6 +15,7 @@ import { EventIngressService } from './event-ingress.service.js';
 import { TaskService } from './tasks/task.service.js';
 import { IdempotencyService } from './idempotency/idempotency.service.js';
 import { PhysicalActionState } from './physical/physical-action-state.service.js';
+import { ConversationModule } from '../modules/conversation/conversation.module.js';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { PhysicalActionState } from './physical/physical-action-state.service.js
     PersistenceModule,
     RegistryModule,
     RuntimeModule,
+    ConversationModule,
     forwardRef(() => AdaptersModule),
   ],
   providers: [

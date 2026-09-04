@@ -18,6 +18,7 @@ import { TaskService } from './tasks/task.service.js';
 import { PhysicalActionState } from './physical/physical-action-state.service.js';
 import { AuditService } from '../observability/audit.service.js';
 import { hasExecutionCredential, isPhysicalEventType } from './event-kind.js';
+import { ConversationHub } from '../modules/conversation/conversation-hub.js';
 
 interface BuildEventInput {
   appId: string;
@@ -56,6 +57,7 @@ export class EventBus {
     private readonly taskService: TaskService,
     private readonly physicalState: PhysicalActionState,
     private readonly audit: AuditService,
+    private readonly conversationHub: ConversationHub,
   ) {}
 
   async publishFromAgent(agentId: string, input: AgentPublishInput): Promise<BusEvent> {
@@ -207,7 +209,9 @@ export class EventBus {
         event.idempotencyKey !== undefined
           ? await this.idempotency.existingEventId(event.idempotencyKey)
           : null;
-      this.logger.info(`idempotent replay event=${event.eventId} original=${originalEventId}`);
+      this.logger.info(
+        `idempotent replay event=${event.eventId} original=${originalEventId}`,
+      );
       await this.audit.append('idempotent.replay', 'event', event.eventId, {
         idempotencyKey: event.idempotencyKey,
         originalEventId,
@@ -224,6 +228,17 @@ export class EventBus {
       );
       return;
     }
+
+    this.conversationHub.publish(event.correlationId, {
+      type: 'bus.event',
+      event_id: event.eventId,
+      event_type: event.eventType,
+      source_agent_id: event.sourceAgentId,
+      task_id: event.taskId,
+      task_version: event.taskVersion,
+      created_at: event.createdAt,
+      payload: event.payload,
+    });
 
     // A physical status `unknown` pauses the causating action (spec §11).
     if (event.eventType.endsWith('.unknown') && event.causationId) {

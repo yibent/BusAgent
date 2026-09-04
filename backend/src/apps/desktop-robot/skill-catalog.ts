@@ -1,0 +1,150 @@
+export interface SkillDefinition {
+  name: string;
+  requiredParams: string[];
+  preconditions: string[];
+  postconditions: string[];
+  lane: string | null;
+  interruptibility: 'immediate' | 'step_boundary' | 'not_applicable';
+  failureTypes: string[];
+  maxRetries: number;
+  loopProfile: string;
+}
+
+/**
+ * Skills are semantic capabilities, not nodes. Providers may change while
+ * these task-level contracts remain stable.
+ */
+export const SKILL_CATALOG: Readonly<Record<string, SkillDefinition>> = {
+  perceive: {
+    name: 'perceive',
+    requiredParams: [],
+    preconditions: ['camera.ready'],
+    postconditions: ['scene.observed'],
+    lane: null,
+    interruptibility: 'not_applicable',
+    failureTypes: ['CAMERA_UNAVAILABLE'],
+    maxRetries: 1,
+    loopProfile: 'approach_fast_loop',
+  },
+  select_target: {
+    name: 'select_target',
+    requiredParams: ['category'],
+    preconditions: [],
+    postconditions: ['target.requested'],
+    lane: null,
+    interruptibility: 'not_applicable',
+    failureTypes: ['NO_CANDIDATE', 'AMBIGUOUS_TARGET'],
+    maxRetries: 1,
+    loopProfile: 'approach_fast_loop',
+  },
+  plan_grasp: {
+    name: 'plan_grasp',
+    requiredParams: ['target'],
+    preconditions: ['scene.observed', 'target.requested'],
+    postconditions: ['grasp.planned'],
+    lane: null,
+    interruptibility: 'not_applicable',
+    failureTypes: ['NO_IK', 'NO_PATH', 'TARGET_OCCLUDED'],
+    maxRetries: 2,
+    loopProfile: 'fine_grasp_geometry_loop',
+  },
+  move_to: {
+    name: 'move_to',
+    requiredParams: ['target'],
+    preconditions: ['grasp.planned'],
+    postconditions: ['robot.at_target'],
+    lane: 'arm-01',
+    interruptibility: 'step_boundary',
+    failureTypes: ['NO_PATH', 'COLLISION', 'TIMEOUT'],
+    maxRetries: 1,
+    loopProfile: 'approach_fast_loop',
+  },
+  grasp: {
+    name: 'grasp',
+    requiredParams: [],
+    preconditions: ['robot.at_target'],
+    postconditions: ['gripper.holding_object'],
+    lane: 'arm-01',
+    interruptibility: 'step_boundary',
+    failureTypes: ['EMPTY', 'SLIPPING'],
+    maxRetries: 2,
+    loopProfile: 'fine_grasp_geometry_loop',
+  },
+  transport: {
+    name: 'transport',
+    requiredParams: ['to'],
+    preconditions: ['gripper.holding_object'],
+    postconditions: ['robot.at_destination'],
+    lane: 'arm-01',
+    interruptibility: 'step_boundary',
+    failureTypes: ['DROPPED', 'NO_PATH'],
+    maxRetries: 1,
+    loopProfile: 'transport_loop',
+  },
+  place: {
+    name: 'place',
+    requiredParams: ['bin', 'cell'],
+    preconditions: ['gripper.holding_object', 'robot.at_destination'],
+    postconditions: ['object.released'],
+    lane: 'arm-01',
+    interruptibility: 'step_boundary',
+    failureTypes: ['WRONG_CELL', 'TILTED', 'OCCUPIED'],
+    maxRetries: 2,
+    loopProfile: 'fine_place_loop',
+  },
+  verify_placement: {
+    name: 'verify_placement',
+    requiredParams: ['bin', 'cell'],
+    preconditions: ['object.released'],
+    postconditions: ['placement.verified'],
+    lane: null,
+    interruptibility: 'not_applicable',
+    failureTypes: ['TILTED', 'WRONG_CELL', 'MISSING', 'UNCERTAIN'],
+    maxRetries: 1,
+    loopProfile: 'verification_loop',
+  },
+  follow: {
+    name: 'follow',
+    requiredParams: ['enabled'],
+    preconditions: ['target.requested'],
+    postconditions: ['robot.following'],
+    lane: 'arm-01',
+    interruptibility: 'immediate',
+    failureTypes: ['CONTROLLER_UNAVAILABLE'],
+    maxRetries: 0,
+    loopProfile: 'approach_fast_loop',
+  },
+  hold: {
+    name: 'hold',
+    requiredParams: [],
+    preconditions: [],
+    postconditions: ['robot.holding'],
+    lane: 'arm-01',
+    interruptibility: 'immediate',
+    failureTypes: ['CONTROLLER_UNAVAILABLE'],
+    maxRetries: 0,
+    loopProfile: 'interrupt_safe_transition_loop',
+  },
+  stop: {
+    name: 'stop',
+    requiredParams: [],
+    preconditions: [],
+    postconditions: ['robot.stopped'],
+    lane: 'arm-01',
+    interruptibility: 'immediate',
+    failureTypes: ['CONTROLLER_UNAVAILABLE'],
+    maxRetries: 0,
+    loopProfile: 'interrupt_safe_transition_loop',
+  },
+  status: {
+    name: 'status',
+    requiredParams: [],
+    preconditions: [],
+    postconditions: ['status.reported'],
+    lane: null,
+    interruptibility: 'not_applicable',
+    failureTypes: ['CONTROLLER_UNAVAILABLE'],
+    maxRetries: 0,
+    loopProfile: 'interaction_loop',
+  },
+};

@@ -1,12 +1,14 @@
-import { Navigate, Route, Routes } from 'react-router-dom';
-import { DialoguePage } from './pages/DialoguePage';
-import { HomePage } from './pages/HomePage';
+import { Navigate, Route, Routes } from "react-router-dom";
+import { DialoguePage } from "./pages/DialoguePage";
+import { HomePage } from "./pages/HomePage";
+import { RobotConsolePage } from "./pages/RobotConsolePage";
 
 export function App() {
   return (
     <Routes>
       <Route path="/" element={<HomePage />} />
       <Route path="/apps/dialogue" element={<DialoguePage />} />
+      <Route path="/apps/robot" element={<RobotConsolePage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

@@ -12,10 +12,12 @@ import { EventIngressService } from './bus/event-ingress.service.js';
 import { RegistrationService } from './registry/registration.service.js';
 import { HostRuntimeService } from './app/host-runtime.service.js';
 import { AudioGateway } from './modules/stt/audio-gateway.js';
+import { RobotControlProxy } from './apps/desktop-robot/robot-control-proxy.js';
 
 /** Minimal structural view of the Fastify reply used for route registration. */
 interface ReplyLike {
   code(statusCode: number): ReplyLike;
+  header(name: string, value: string): ReplyLike;
   send(payload: unknown): unknown;
 }
 
@@ -23,6 +25,10 @@ interface ReplyLike {
 interface FastifyInstanceLike {
   server: Server;
   post(
+    path: string,
+    handler: (request: unknown, reply: ReplyLike) => void | Promise<void>,
+  ): unknown;
+  get(
     path: string,
     handler: (request: unknown, reply: ReplyLike) => void | Promise<void>,
   ): unknown;
@@ -52,6 +58,7 @@ async function bootstrap(): Promise<void> {
   const registrations = app.get(RegistrationService);
   const runtime = app.get(HostRuntimeService);
   const audio = app.get(AudioGateway);
+  const robotControl = app.get(RobotControlProxy);
   const fastify = app.getHttpAdapter().getInstance() as unknown as FastifyInstanceLike;
 
   fastify.post(config.eventIngressPath, async (request, reply) => {
@@ -65,6 +72,13 @@ async function bootstrap(): Promise<void> {
   fastify.post(config.registrationPath, async (request, reply) => {
     const result = await registrations.handle(bodyOf(request));
     reply.code(result.status).send(result.body);
+  });
+  fastify.get('/v1/robot/status', async (_request, reply) => {
+    const result = await robotControl.status();
+    reply
+      .code(result.status)
+      .header('content-type', result.contentType)
+      .send(result.body);
   });
 
   await app.listen(config.port, '0.0.0.0');

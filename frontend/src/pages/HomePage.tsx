@@ -1,12 +1,20 @@
-import { Link } from 'react-router-dom';
-import { ArrowIcon, MessageIcon } from '../components/Icons';
+import { Link } from "react-router-dom";
+import { ArrowIcon, MessageIcon, RobotIcon } from "../components/Icons";
 
 const apps = [
   {
-    id: 'dialogue',
-    name: '对话助手',
-    description: '通过文字或语音，自然地与 BusAgent 交流。',
-    path: '/apps/dialogue',
+    id: "robot",
+    name: "机器人操作台",
+    description: "通过语音控制 SO-101，并实时查看多节点协作与并行任务路径。",
+    path: "/apps/robot",
+    icon: "robot",
+  },
+  {
+    id: "dialogue",
+    name: "机械臂操作助手",
+    description: "通过文字或语音下达工程操作指令并查询执行状态。",
+    path: "/apps/dialogue",
+    icon: "message",
   },
 ];
 
@@ -26,7 +34,7 @@ export function HomePage() {
         {apps.map((app) => (
           <Link className="app-card" to={app.path} key={app.id}>
             <span className="app-icon">
-              <MessageIcon />
+              {app.icon === "robot" ? <RobotIcon /> : <MessageIcon />}
             </span>
             <span className="app-copy">
               <strong>{app.name}</strong>

@@ -26,6 +26,29 @@ pnpm dev
 
 浏览器打开 [http://localhost:3000/](http://localhost:3000/)。前端文件在仓库 `frontend/`，由 Host 同源托管。
 
+### 机器人指令链路
+
+`desktop-robot-assistant` 当前使用以下真实事件链路：
+
+```text
+transcript.final
+  -> InstructionUnderstandingNode
+  -> GroundingClarificationNode
+  -> TaskPlannerNode
+  -> PlanValidatorNode
+  -> LoopRouterNode
+  -> ExecutionCoordinatorNode
+  -> RobotAdapterNode
+  -> execution.completed / failed / unknown
+  -> DialogueAgent -> TTS
+```
+
+`InterruptMonitorNode` 同时监听增量和最终转写；“停一下”“别动”等短语会绕过普通语义规划，直接生成 `hold`。执行适配器默认调用 `http://127.0.0.1:7861/api/command`，可通过 App 配置中的 `controller_url` 替换为其他 HTTP Provider；以后也可实现同一 `RobotAdapter` 接口的 MCP 或 ROS Provider。
+
+当前控制器支持 `select_target`、`perceive`、`follow`、`hold`、`stop`、`status`。抓取/放置计划使用 `plan_grasp`、`move_to`、`grasp`、`transport`、`place` 和 `verify_placement`，这些尚无控制器实现，调用时返回 `execution.failed`。系统不会将规划成功当作物理执行成功。
+
+计划校验和执行门是确定性代码，不调用模型。当前只校验技能名称、必需参数、前后置条件、任务版本和执行车道；没有额外引入复杂的身份认证或审批流程。
+
 
 ## 1. 已确定的架构选择
 

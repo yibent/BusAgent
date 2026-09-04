@@ -17,7 +17,7 @@ import { streamQwenChat, type ChatMessage } from './qwen-chat.js';
 export const DIALOGUE_REGISTRATION_KEY = 'DialogueAgent';
 
 const DEFAULT_SYSTEM_PROMPT =
-  '你是桌面上的语音聊天助手。用简洁自然的中文口语回答，一两段即可，不要用 markdown。';
+  '你是 BusAgent 中严谨的工程机械臂操作助手，服务于 SO-101 与 Isaac Sim 工作单元。使用简洁、明确、专业的中文口语回答，不使用 markdown。严格区分指令已收到、计划已生成、正在执行、执行完成、执行失败和结果未知；只依据系统事件陈述事实，在收到 execution.completed 前绝不能声称动作已经完成。信息不足时只询问当前最关键的一项。';
 
 const MAX_TURNS = 12;
 
@@ -26,6 +26,29 @@ function payloadText(payload: unknown): string {
     return String((payload as { text: unknown }).text).trim();
   }
   return '';
+}
+
+function factualReply(eventType: string, payload: unknown): string | null {
+  if (payload === null || typeof payload !== 'object') return null;
+  const record = payload as Record<string, unknown>;
+  const message = typeof record.message === 'string' ? record.message.trim() : '';
+  if (eventType === 'clarification.requested') {
+    const question = typeof record.question === 'string' ? record.question.trim() : '';
+    return question || '请再说明一下要处理的物体和目标位置。';
+  }
+  if (eventType === 'execution.completed') {
+    return message || '任务已经完成。';
+  }
+  if (eventType === 'execution.failed') {
+    return message ? `任务没有完成：${message}` : '任务没有完成，请检查控制端状态。';
+  }
+  if (eventType === 'execution.unknown') {
+    return '控制端没有返回确定结果，请查看机械臂当前状态。';
+  }
+  if (eventType === 'plan.rejected') {
+    return '这条指令暂时无法生成可执行步骤，请换一种说法或补充目标位置。';
+  }
+  return null;
 }
 
 function asString(value: unknown, fallback: string): string {
@@ -79,11 +102,14 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
   }
 
   async handle(context: InProcessEventContext): Promise<void> {
+    const fixed = factualReply(context.event.eventType, context.event.payload);
+    if (fixed !== null) {
+      await this.replyWithFact(context, fixed);
+      return;
+    }
     const text = payloadText(context.event.payload);
     if (context.event.eventType !== 'intent.created') {
-      this.logger.debug(
-        `skip ${context.event.eventType} id=${context.event.eventId}`,
-      );
+      this.logger.debug(`skip ${context.event.eventType} id=${context.event.eventId}`);
       return;
     }
     if (text.length === 0) {
@@ -103,6 +129,29 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
         this.abort.delete(conversationId);
       }
     }
+  }
+
+  private async replyWithFact(
+    context: InProcessEventContext,
+    text: string,
+  ): Promise<void> {
+    const conversationId = context.event.correlationId;
+    this.abort.get(conversationId)?.abort();
+    this.tts.cancel(conversationId);
+    const gen = (this.generation.get(conversationId) ?? 0) + 1;
+    this.generation.set(conversationId, gen);
+    this.hub.publish(conversationId, { type: 'reply.start', turn: gen });
+    this.hub.publish(conversationId, { type: 'reply.delta', text, turn: gen });
+    this.tts.startTurn(conversationId, gen);
+    this.tts.append(conversationId, gen, text);
+    this.hub.publish(conversationId, { type: 'reply.final', text, turn: gen });
+    await this.tts.finishTurn(conversationId, gen);
+    await context.publish({
+      event_type: 'reply.created',
+      correlation_id: conversationId,
+      causation_id: context.event.eventId,
+      payload: { text, factual: true },
+    });
   }
 
   private async reply(
@@ -138,7 +187,10 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
       for await (const delta of streamQwenChat({
         apiKey,
         url: this.hostConfig.qwenChatUrl,
-        model: asString(context.agentConfig.config.model, this.hostConfig.qwenChatModel),
+        model: asString(
+          context.agentConfig.config.model,
+          this.hostConfig.qwenChatModel,
+        ),
         messages,
         signal,
       })) {
@@ -147,7 +199,11 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
           return;
         }
         full += delta;
-        this.hub.publish(conversationId, { type: 'reply.delta', text: delta, turn: gen });
+        this.hub.publish(conversationId, {
+          type: 'reply.delta',
+          text: delta,
+          turn: gen,
+        });
         this.tts.append(conversationId, gen, delta);
       }
     } catch (error) {
