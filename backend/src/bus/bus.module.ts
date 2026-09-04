@@ -4,7 +4,6 @@ import { PersistenceModule } from '../persistence/persistence.module.js';
 import { RegistryModule } from '../registry/registry.module.js';
 import { RuntimeModule } from '../app/runtime.module.js';
 import { AdaptersModule } from '../adapters/adapters.module.js';
-import { RedisConnection } from './queue/redis-connection.service.js';
 import { QueueManager } from './queue/queue-manager.service.js';
 import { Router } from './routing/router.service.js';
 import { PermissionPolicy } from './routing/permission-policy.service.js';
@@ -26,7 +25,6 @@ import { PhysicalActionState } from './physical/physical-action-state.service.js
     forwardRef(() => AdaptersModule),
   ],
   providers: [
-    RedisConnection,
     QueueManager,
     Router,
     PermissionPolicy,
@@ -39,12 +37,6 @@ import { PhysicalActionState } from './physical/physical-action-state.service.js
     EventBus,
     EventIngressService,
   ],
-  exports: [
-    EventBus,
-    EventIngressService,
-    DeliveryService,
-    RedisConnection,
-    QueueManager,
-  ],
+  exports: [EventBus, EventIngressService, DeliveryService],
 })
 export class BusModule {}

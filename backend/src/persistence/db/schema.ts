@@ -75,7 +75,7 @@ export const events = mysqlTable(
   ],
 );
 
-/** Per (event, agent) delivery record; mirrors queue state and survives restart. */
+/** Per (event, agent) delivery record; survives restart so the in-process queue can be rebuilt. */
 export const deliveries = mysqlTable(
   'busagent_deliveries',
   {

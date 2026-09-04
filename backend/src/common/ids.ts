@@ -20,7 +20,7 @@ export function newUuid(): string {
   return randomUUID();
 }
 
-/** Stable id for a delivery row / BullMQ job: one per event + target agent. */
+/** Stable id for a delivery row / in-process job: one per event + target agent. */
 export function deliveryId(eventId: string, agentId: string): string {
   return `${eventId}:${agentId}`;
 }

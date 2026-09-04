@@ -133,7 +133,7 @@ CREATE TABLE IF NOT EXISTS busagent_audit_log (
 
 const MIGRATIONS: Migration[] = [{ version: 1, name: 'init', sql: INITIAL_SCHEMA }];
 
-/** Applies versioned migrations; the source of truth is MySQL, not Redis. */
+/** Applies versioned migrations; MySQL is the source of truth for recovery. */
 export class MigrationRunner {
   constructor(private readonly db: DatabaseConnection) {}
 

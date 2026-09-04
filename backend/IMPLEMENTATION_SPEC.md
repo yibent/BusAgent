@@ -17,11 +17,11 @@
 - 每个 `agent_id` 只允许一个活动实例；
 - Agent 可以是进程内 TypeScript 类，也可以是外部 HTTP 服务；
 - HTTP Endpoint URL 直接写入 Package；
-- 不使用 HTTP 身份认证，部署边界内的 Host、Agent、Redis 和 MySQL 均视为可信；
+- 不使用 HTTP 身份认证，部署边界内的 Host、Agent 和 MySQL 均视为可信；
 - 所有业务通信都是异步事件，不使用同步业务响应和流式传输；
 - 所有 Agent 都向 Host 的统一 `POST /v1/events` 发布事件；
-- BullMQ/Redis 负责队列和投递，MySQL 负责持久化事实；
-- 队列粒度为每个 `app_id + agent_id` 一个 BullMQ 队列；
+- 进程内队列负责投递、延迟重试和并发限制，MySQL 负责持久化事实；
+- 队列粒度为每个 `app_id + agent_id` 一个进程内队列；不使用 Redis 或外部作业队列；
 - 完整 JSON 事件正文存入 MySQL；大型媒体只存外部引用；
 - Agent 注册租约 TTL 固定 30 秒，每 10 秒续租；
 - 重试上限和默认策略由 Package 声明，App 只能进一步收紧；
@@ -40,7 +40,8 @@
 - 外部消息中间件适配器；
 - ROS 2、DDS、机械臂驱动或真实硬件控制；
 - 运行时配置热加载、灰度切换和在线升级；
-- 自动发现服务 URL。URL 必须来自 Package。
+- 自动发现服务 URL。URL 必须来自 Package；
+- Redis、BullMQ 或其他外部作业队列。
 
 ## 3. 运行时分层
 
@@ -58,8 +59,8 @@ Adapters
   - InProcessAgentAdapter
   - HttpAgentAdapter
       |
-BullMQ + Redis -------------- MySQL + Drizzle
-queues / retries / jobs        events / snapshots / audit
+In-process queues ---------- MySQL + Drizzle
+delivery / retries             events / snapshots / audit
 ```
 
 建议目录：
@@ -109,7 +110,6 @@ backend-config/
 BUSAGENT_CONFIG_DIR=./backend-config
 BUSAGENT_PACKAGE_DIR=./backend-config/packages
 BUSAGENT_APP_FILE=./backend-config/apps/desktop-robot.app.json
-BUSAGENT_REDIS_URL=redis://127.0.0.1:6379
 BUSAGENT_MYSQL_URL=mysql://user:password@127.0.0.1:3306/busagent
 BUSAGENT_EVENT_INGRESS_PATH=/v1/events
 BUSAGENT_REGISTRATION_PATH=/internal/registrations
@@ -123,7 +123,7 @@ Host 启动流程：
 4. 校验 App 引用的 Agent、事件类型、路由目标和配置 Schema；
 5. 将 Package/App 快照写入 MySQL；
 6. 注册进程内 Agent 类，等待外部 Agent 注册；
-7. 为当前 App 的每个 Agent 初始化 BullMQ 队列；
+7. 为当前 App 的每个 Agent 初始化进程内投递队列；
 8. 只有所需 Agent 均健康时才将 App 标记为 `ready`；
 9. 开始接收和路由事件。
 
@@ -329,7 +329,7 @@ Package 只能引用已注册的 `registration_key`，不能根据配置字符�
 busagent:{app_id}:{agent_id}
 ```
 
-BullMQ/Redis 负责待投递队列、延迟重试、并发限制、优先级、取消标记和短期 Job 状态。MySQL + Drizzle 负责：
+进程内队列负责待投递作业、延迟重试、并发限制和优先级。MySQL + Drizzle 负责：
 
 - Package/App 启动快照；
 - 全局 Agent 注册表和租约记录；
@@ -337,7 +337,7 @@ BullMQ/Redis 负责待投递队列、延迟重试、并发限制、优先级、�
 - 事件投递记录、任务状态和幂等记录；
 - 死信元数据、审计和 trace 索引。
 
-Redis 不是唯一事实来源；恢复依赖 MySQL。事件正文使用 MySQL JSON 字段，大型音频、图像和文件只保留外部引用。
+进程内队列不是事实来源；关闭或重启后根据 MySQL 中的投递记录重建队列。事件正文使用 MySQL JSON 字段，大型音频、图像和文件只保留外部引用。
 
 | 事件类型 | 默认处理 |
 | --- | --- |
@@ -379,13 +379,13 @@ shutdown -> drain queues -> persist state -> stop
 
 ## 13. 实现顺序
 
-1. 添加 Drizzle、MySQL 驱动、BullMQ 和 Redis 配置；
+1. 添加 Drizzle、MySQL 驱动和进程内投递队列；
 2. 定义 Package、App、Event Envelope 的 Zod Schema；
 3. 实现启动加载、路径安全检查和全局 Agent 冲突检测；
 4. 实现 MySQL migration、Repository 和启动快照；
 5. 实现全局 Agent Registry、注册租约和单实例约束；
 6. 实现 `InProcessAgentAdapter` 与 `HttpAgentAdapter`；
-7. 实现 BullMQ 队列、统一 `/v1/events`、`202` 投递确认和幂等；
+7. 实现进程内队列、统一 `/v1/events`、`202` 投递确认和幂等；
 8. 实现 App 路由、下一跳建议校验、重试和死信；
 9. 实现任务版本、取消、物理执行状态和 trace；
 10. 编写集成测试和故障注入测试。
@@ -395,7 +395,7 @@ shutdown -> drain queues -> persist state -> stop
 - 启动时能加载多个 Package 和一个 App，并拒绝重复 `agent_id`；
 - App 能引用相对 prompt 文件，禁止路径逃逸；
 - 一个进程内 Agent 和一个 HTTP Agent 能通过事件完成一条链路；
-- 每个 `app_id + agent_id` 使用独立 BullMQ 队列；
+- 每个 `app_id + agent_id` 使用独立进程内队列；
 - HTTP 投递只依赖 `202`，业务结果通过 `/v1/events` 回传；
 - 重复事件不会产生重复业务副作用；
 - 租约 30 秒、10 秒续租，过期 Agent 不再接收事件；
@@ -403,4 +403,4 @@ shutdown -> drain queues -> persist state -> stop
 - 旧任务版本结果不会推进当前任务；
 - 物理动作出现 `unknown` 后不会自动重放；
 - MySQL 可恢复事件状态、配置快照、死信和审计记录；
-- 关闭和重启后，Redis 队列可根据 MySQL 状态恢复。
+- 关闭和重启后，未完成投递根据 MySQL 状态恢复到进程内队列。

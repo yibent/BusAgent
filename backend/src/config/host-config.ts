@@ -9,7 +9,6 @@ const EnvSchema = z.object({
   BUSAGENT_CONFIG_DIR: z.string().min(1).optional(),
   BUSAGENT_PACKAGE_DIR: z.string().min(1).optional(),
   BUSAGENT_APP_FILE: z.string().min(1).optional(),
-  BUSAGENT_REDIS_URL: z.string().url().optional(),
   BUSAGENT_MYSQL_URL: z.string().url().optional(),
   BUSAGENT_EVENT_INGRESS_PATH: z.string().min(1).optional(),
   BUSAGENT_REGISTRATION_PATH: z.string().min(1).optional(),
@@ -23,7 +22,6 @@ export class HostConfig {
   readonly configDir: string;
   readonly packageDir: string;
   readonly appFile: string;
-  readonly redisUrl: string;
   readonly mysqlUrl: string;
   readonly eventIngressPath: string;
   readonly registrationPath: string;
@@ -35,7 +33,6 @@ export class HostConfig {
     configDir: string;
     packageDir: string;
     appFile: string;
-    redisUrl: string;
     mysqlUrl: string;
     eventIngressPath: string;
     registrationPath: string;
@@ -46,7 +43,6 @@ export class HostConfig {
     this.configDir = values.configDir;
     this.packageDir = values.packageDir;
     this.appFile = values.appFile;
-    this.redisUrl = values.redisUrl;
     this.mysqlUrl = values.mysqlUrl;
     this.eventIngressPath = values.eventIngressPath;
     this.registrationPath = values.registrationPath;
@@ -76,7 +72,6 @@ export class HostConfig {
       configDir,
       packageDir,
       appFile,
-      redisUrl: e.BUSAGENT_REDIS_URL ?? 'redis://127.0.0.1:6379',
       mysqlUrl: e.BUSAGENT_MYSQL_URL ?? 'mysql://root:root@127.0.0.1:3306/busagent',
       eventIngressPath: e.BUSAGENT_EVENT_INGRESS_PATH ?? '/v1/events',
       registrationPath: e.BUSAGENT_REGISTRATION_PATH ?? '/internal/registrations',

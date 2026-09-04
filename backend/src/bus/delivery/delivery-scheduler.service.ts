@@ -1,5 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { type JobsOptions } from 'bullmq';
 import { Clock } from '../../common/clock.js';
 import { deliveryId } from '../../common/ids.js';
 import { QueueManager } from '../queue/queue-manager.service.js';
@@ -10,7 +9,7 @@ import type { BusEvent } from '../../protocol/envelope.js';
 import type { DeliveryTarget } from '../routing/router.service.js';
 
 /**
- * Persists a delivery record and enqueues the BullMQ job for every resolved
+ * Persists a delivery record and enqueues the in-process job for every resolved
  * target. Kept separate from the delivery worker so the event bus never depends
  * on the adapters (avoids a circular module graph).
  */
@@ -45,21 +44,14 @@ export class DeliveryScheduler {
         createdAt: now,
       });
 
-      const jobOptions: JobsOptions = {
-        jobId: id,
-        attempts: effective.maxAttempts,
+      queue.enqueue({
+        id,
+        data: { eventId: event.eventId, agentId: target.agentId, appId: target.appId },
+        attemptsMade: 0,
+        maxAttempts: effective.maxAttempts,
         priority: event.priority,
-        removeOnComplete: true,
-        removeOnFail: false,
-      };
-      if (effective.maxAttempts > 1) {
-        jobOptions.backoff = { type: 'fixed', delay: effective.backoffMs };
-      }
-      await queue.add(
-        'deliver',
-        { eventId: event.eventId, agentId: target.agentId, appId: target.appId },
-        jobOptions,
-      );
+        backoffMs: effective.backoffMs,
+      });
     }
   }
 }

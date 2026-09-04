@@ -6,7 +6,6 @@ describe('HostConfig.fromEnv', () => {
     const config = HostConfig.fromEnv({});
     expect(config.eventIngressPath).toBe('/v1/events');
     expect(config.registrationPath).toBe('/internal/registrations');
-    expect(config.redisUrl).toBe('redis://127.0.0.1:6379');
     expect(config.registrationWaitTimeoutMs).toBe(30_000);
   });
 

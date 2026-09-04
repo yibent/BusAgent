@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { and, eq, inArray, isNull, lte, or } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { DatabaseConnection } from '../db/client.js';
 import { deliveries } from '../db/schema.js';
 import { toMysqlDatetime } from '../db/mysql-datetime.js';
@@ -87,20 +87,12 @@ export class DeliveriesRepository {
       .execute();
   }
 
-  /** Deliveries that still owe a BullMQ job after a restart (recovery from MySQL). */
-  async findRecoverable(nowIso: string): Promise<RecoverableDelivery[]> {
+  /** Deliveries that still owe a job after a restart (recovery from MySQL). */
+  async findRecoverable(): Promise<RecoverableDelivery[]> {
     const rows = await this.db.db
       .select()
       .from(deliveries)
-      .where(
-        and(
-          inArray(deliveries.status, ['queued', 'retrying']),
-          or(
-            isNull(deliveries.next_attempt_at),
-            lte(deliveries.next_attempt_at, toMysqlDatetime(nowIso)),
-          ),
-        ),
-      )
+      .where(inArray(deliveries.status, ['queued', 'retrying']))
       .execute();
     return rows.map((row) => ({
       id: row.id,

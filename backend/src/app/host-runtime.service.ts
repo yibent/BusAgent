@@ -21,14 +21,13 @@ import { RegistryService } from '../registry/registry.service.js';
 import { LeaseManager } from '../leases/lease-manager.service.js';
 import { MigrationRunner } from '../persistence/db/migrate.js';
 import { DatabaseConnection } from '../persistence/db/client.js';
-import { RedisConnection } from '../bus/queue/redis-connection.service.js';
 import { AgentsRepository } from '../persistence/repositories/agents.repository.js';
 import { DeliveryService } from '../bus/delivery/delivery.service.js';
 
 /**
  * Host startup lifecycle (spec §4, §12):
  * load packages -> install (global agent_id conflict detection) -> load/validate
- * app -> persist snapshots -> register in-process agents -> init queues/workers
+ * app -> persist snapshots -> register in-process agents -> init delivery queues
  * -> recover from MySQL -> await required service registrations -> ready.
  *
  * Any validation failure aborts startup: the process must not run with a
@@ -53,7 +52,6 @@ export class HostRuntimeService
     private readonly leases: LeaseManager,
     private readonly migrations: MigrationRunner,
     private readonly db: DatabaseConnection,
-    private readonly redis: RedisConnection,
     private readonly agentsRepo: AgentsRepository,
     private readonly delivery: DeliveryService,
   ) {}
@@ -83,7 +81,6 @@ export class HostRuntimeService
     this.logger.log('BusAgent host starting');
 
     await this.migrations.up();
-    await this.redis.ping();
 
     const packages: LoadedPackage[] = await loadPackages(this.config.packageDir);
     this.installer.installAll(packages);

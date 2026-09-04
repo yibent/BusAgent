@@ -16,19 +16,19 @@
 - 不使用流式传输，不通过 HTTP 请求同步返回业务结果。
 - Package 和 App 只支持本地 JSON 文件，并在 Host 启动时一次性加载；运行期间不热更新配置；
 - 外部服务主动注册并定期续租；一个 `agent_id` 只允许一个活动实例；
-- Event Bus 使用 BullMQ/Redis 负责队列与投递，MySQL 负责配置快照、事件状态和审计；
+- Event Bus 使用进程内队列负责投递，MySQL 负责配置快照、事件状态和审计；
 - Agent 可以在 App 声明的允许范围内建议下一跳；
 - 普通事件、任务事件和物理副作用事件使用不同的失败与重试策略；
 - 配置安装发现全局 `agent_id` 冲突时直接拒绝。
 - 所有 Agent 都通过 Host 统一的 `/v1/events` 回传事件；
-- BullMQ 队列粒度为每个 `app_id + agent_id` 一个队列；
+- 队列粒度为每个 `app_id + agent_id` 一个进程内队列；不使用 Redis；
 - 完整 JSON 事件正文持久化到 MySQL；
 - 注册租约固定为 30 秒，每 10 秒续租；
 - 重试策略由 Agent Package 声明，App 只能缩小重试范围；
 - 执行器必须发布 `accepted`、`started`、`completed`、`failed`、`unknown` 五类状态事件；
 - MySQL 数据访问层采用 Drizzle ORM。
 
-不进行 HTTP 身份认证意味着当前版本假定 Host、Agent 和 Redis/MySQL 均处于完全可信的部署边界内。
+不进行 HTTP 身份认证意味着当前版本假定 Host、Agent 和 MySQL 均处于完全可信的部署边界内。
 
 ## 2. 核心模型
 
@@ -61,7 +61,7 @@ src/
   package/         # Package 配置、安装和启动加载
   registry/        # 全局 agent_id、endpoint、实例和健康状态
   protocol/        # event envelope、identity、schema、ack、error
-  bus/              # event ingress、routing、BullMQ delivery、retry、cancel
+  bus/              # event ingress、routing、in-process delivery、retry、cancel
   adapters/         # in-process class、HTTP event delivery
   context/          # context refs、version、assembly
   supervision/      # policy、permission、approval
@@ -281,12 +281,12 @@ Content-Type: application/json
 - 对副作用操作使用额外的幂等键和执行凭证；
 - 路由依据启动时加载的 App 快照，运行中的任务不会发生配置切换。Agent 的下一跳建议必须匹配 App 的允许目标集合，并经过 Host 的结构和策略检查。
 
-### 9.1 BullMQ、Redis 与 MySQL 的职责
+### 9.1 进程内队列与 MySQL 的职责
 
-- BullMQ/Redis：待投递队列、延迟重试、并发限制、优先级、取消标记和短期投递状态；
+- 进程内队列：待投递作业、延迟重试、并发限制和优先级；
 - 队列命名固定为 `busagent:{app_id}:{agent_id}`，每个 App 使用的 Agent 都有独立队列；
 - MySQL：Package/App 启动快照、全局 Agent 注册表、完整 JSON 事件、任务状态、幂等记录、死信元数据和审计记录；
-- Redis 中的数据不是唯一事实来源，重启恢复依赖 MySQL 中的事件和任务状态；
+- 进程内队列不是事实来源，重启恢复依赖 MySQL 中的事件和投递状态；
 - 完整事件正文写入 MySQL JSON 字段；音频、图像等大对象仍只保存外部引用，不直接塞入事件正文。
 
 ### 9.2 事件分类
@@ -315,7 +315,7 @@ shutdown -> drain queues -> persist state -> stop
 1. 定义 Package、App 和 Event Envelope 的 Zod Schema；
 2. 实现全局 Agent Registry 和配置冲突检测；
 3. 实现 `InProcessAgentAdapter` 与 `HttpAgentAdapter`；
-4. 实现基于 BullMQ/Redis 的纯异步 Event Bus、`202` 投递确认和事件回传入口；
+4. 实现基于进程内队列的纯异步 Event Bus、`202` 投递确认和事件回传入口；
 5. 实现 App 配置校验、App 目录文件解析、运行快照和事件路由；
 6. 实现幂等、重试、取消、健康检查和 trace；
 7. 再加入资源租约和监督策略；配置版本切换不在运行时实现。

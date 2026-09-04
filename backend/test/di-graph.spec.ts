@@ -4,7 +4,7 @@ import { AppModule } from '../src/app.module.js';
 
 /**
  * Verifies the whole Nest DI graph can be instantiated without booting the
- * host lifecycle (no Redis/MySQL connections are made): every provider is
+ * host lifecycle (no MySQL connections are made): every provider is
  * resolvable by type and the forwardRef module cycle between Bus/Adapters
  * composes correctly.
  */
