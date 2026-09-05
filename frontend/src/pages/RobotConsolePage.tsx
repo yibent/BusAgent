@@ -62,8 +62,8 @@ const coreNodes: ArchitectureNode[] = [
     id: "understanding",
     index: "01",
     name: "指令理解",
-    hint: "Intent Frame",
-    events: ["instruction.parsed"],
+    hint: "qwen3.8-flash · low",
+    events: ["instruction.parsed", "interaction.classified"],
   },
   {
     id: "grounding",
@@ -110,6 +110,8 @@ const executionNodes: ArchitectureNode[] = [
     name: "设备适配",
     hint: "Robot Adapter",
     events: [
+      "execution.queued",
+      "execution.cancelled",
       "execution.accepted",
       "execution.started",
       "execution.completed",
@@ -123,6 +125,7 @@ const executionNodes: ArchitectureNode[] = [
 const stageByEvent: Record<string, number> = {
   "intent.created": 0,
   "instruction.parsed": 0,
+  "interaction.classified": 0,
   "command.grounded": 1,
   "clarification.requested": 1,
   "plan.proposed": 2,
@@ -132,6 +135,8 @@ const stageByEvent: Record<string, number> = {
   "interrupt.requested": 4,
   "robot.execute.requested": 5,
   "execution.accepted": 5,
+  "execution.queued": 5,
+  "execution.cancelled": 6,
   "execution.started": 5,
   "execution.completed": 6,
   "execution.failed": 6,
@@ -141,6 +146,7 @@ const stageByEvent: Record<string, number> = {
 const eventNames: Record<string, string> = {
   "intent.created": "收到用户指令",
   "instruction.parsed": "完成结构化理解",
+  "interaction.classified": "交互意图确认 · 无需设备执行",
   "command.grounded": "目标语义已确认",
   "clarification.requested": "需要补充目标信息",
   "plan.proposed": "生成技能计划",
@@ -150,6 +156,8 @@ const eventNames: Record<string, string> = {
   "interrupt.requested": "收到立即暂停",
   "robot.execute.requested": "提交设备执行",
   "execution.accepted": "控制器已接收",
+  "execution.queued": "等待上一动作完成 · 尚未下发",
+  "execution.cancelled": "动作已取消",
   "execution.started": "开始执行技能",
   "execution.completed": "任务执行完成",
   "execution.failed": "任务执行失败",
@@ -167,6 +175,12 @@ function timeText(timestamp: number) {
 }
 
 function eventDetail(event: RobotBusEvent): string {
+  if (event.payload.phase === "interaction") {
+    const latency = event.payload.first_text_ms;
+    return typeof latency === "number"
+      ? `快速交互 · 首字 ${latency} ms`
+      : "快速交互";
+  }
   const skill = event.payload.skill;
   if (typeof skill === "string") return skill;
   const message = event.payload.message;
@@ -192,6 +206,12 @@ function architectureNodeState(
   events: RobotBusEvent[],
   activeNodeId?: string,
 ): ArchitectureNodeState {
+  if (
+    node.id === "adapter" &&
+    events.find((event) => node.events.includes(event.eventType))?.eventType ===
+      "execution.queued"
+  )
+    return "waiting";
   if (includesEvent(events, node.failureEvents ?? [])) return "failed";
   if (activeNodeId === node.id) return "active";
   if (includesEvent(events, node.events)) return "done";
@@ -271,7 +291,8 @@ export function RobotConsolePage() {
     (maximum, event) => Math.max(maximum, stageByEvent[event.eventType] ?? -1),
     -1,
   );
-  const latest = taskEvents[0];
+  // Interaction replies do not hide the independently advancing task state.
+  const latest = taskEvents.find((event) => event.eventType in stageByEvent);
   const terminal = latest?.eventType;
   const activeNodeId = activeNodeForEvent(terminal);
   const failed =
@@ -279,7 +300,8 @@ export function RobotConsolePage() {
     terminal === "execution.unknown" ||
     terminal === "plan.rejected";
   const needsInput = terminal === "clarification.requested";
-  const completed = terminal === "execution.completed";
+  const completed =
+    terminal === "execution.completed" || terminal === "interaction.classified";
   const hasIntent = includesEvent(taskEvents, ["intent.created"]);
   const dialogueState: ArchitectureNodeState =
     activity === "error"
@@ -470,7 +492,8 @@ export function RobotConsolePage() {
                 </p>
                 <p>
                   最近动作：
-                  {robot.status.motion.last_command?.message ?? "尚未下达"} ·{" "}
+                  {robot.status.motion.last_command?.message ??
+                    "尚未下达"} ·{" "}
                   {(
                     {
                       accepted: "已接收",
@@ -483,9 +506,25 @@ export function RobotConsolePage() {
                 </p>
                 {robot.status.grounding && (
                   <div>
-                    <p>最近物体定位（顶部 RGB-D）：{robot.status.grounding.prompt} · {robot.status.grounding.count} 个候选</p>
-                    <p>物体可见表面坐标（米）：{robot.status.grounding.object_position_world_m?.map(v => v.toFixed(3)).join(" / ") ?? "未获得有效深度"}</p>
-                    {robot.status.grounding.target_world_m && <p>物体偏移目标（米）：{robot.status.grounding.target_world_m.map(v => v.toFixed(3)).join(" / ")}</p>}
+                    <p>
+                      最近物体定位（顶部 RGB-D）：
+                      {robot.status.grounding.prompt} ·{" "}
+                      {robot.status.grounding.count} 个候选
+                    </p>
+                    <p>
+                      物体可见表面坐标（米）：
+                      {robot.status.grounding.object_position_world_m
+                        ?.map((v) => v.toFixed(3))
+                        .join(" / ") ?? "未获得有效深度"}
+                    </p>
+                    {robot.status.grounding.target_world_m && (
+                      <p>
+                        物体偏移目标（米）：
+                        {robot.status.grounding.target_world_m
+                          .map((v) => v.toFixed(3))
+                          .join(" / ")}
+                      </p>
+                    )}
                     <p>{robot.status.grounding.message}</p>
                   </div>
                 )}
@@ -506,15 +545,19 @@ export function RobotConsolePage() {
               <span
                 className={`task-state ${failed ? "failed" : completed ? "done" : ""}`}
               >
-                {failed
-                  ? "异常"
-                  : completed
-                    ? "完成"
-                    : needsInput
-                      ? "待补充"
-                      : stage >= 0
-                        ? "运行中"
-                        : "待命"}
+                {terminal === "execution.queued"
+                  ? "排队等待"
+                  : terminal === "execution.cancelled"
+                    ? "已取消"
+                    : failed
+                      ? "异常"
+                      : completed
+                        ? "完成"
+                        : needsInput
+                          ? "待补充"
+                          : stage >= 0
+                            ? "运行中"
+                            : "待命"}
               </span>
             </div>
             <div className="architecture-summary">
@@ -531,7 +574,7 @@ export function RobotConsolePage() {
                 <span>设备串行通道</span>
               </div>
               <p>
-                事件总线按职责分发；工程任务保持确定性主链，对话反馈与中断监听少量并行。
+                同一输入同时进入快速对话和任务理解；边回应、边解析，实际动作仍走单设备通道。
               </p>
             </div>
 
@@ -547,7 +590,7 @@ export function RobotConsolePage() {
                   <span>{stateText(sttState)}</span>
                 </div>
                 <span className="bus-chip">
-                  EVENT BUS · 一次输入 / 按需分发
+                  EVENT BUS · 一次输入 / 双路并行
                 </span>
               </div>
 
@@ -576,14 +619,14 @@ export function RobotConsolePage() {
                   <section className="architecture-lane side-lane dialogue-lane">
                     <header>
                       <span>并行旁路 A</span>
-                      <small>不阻塞任务规划</small>
+                      <small>不等待语义推理与动作完成</small>
                     </header>
                     <div className="side-route">
                       <div className={`compact-node ${dialogueState}`}>
                         <span className="compact-node-icon">D</span>
                         <div>
-                          <strong>工程对话</strong>
-                          <small>Dialogue Agent</small>
+                          <strong>快速工程对话</strong>
+                          <small>qwen-flash · 无思考</small>
                         </div>
                         <em>{stateText(dialogueState)}</em>
                       </div>

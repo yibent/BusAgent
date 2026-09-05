@@ -6,6 +6,7 @@ import {
   type InProcessEventContext,
 } from '../../adapters/in-process/agent-classes.js';
 import type { RobotPlan, SkillStep } from './instruction-types.js';
+import { summarizeCapabilities } from './interaction-snapshot.js';
 
 export const ROBOT_ADAPTER_REGISTRATION_KEY = 'RobotAdapterNode';
 
@@ -52,7 +53,7 @@ function completionMessage(plan: RobotPlan, results: ControlResult[]): string {
     case 'motion':
       return results.at(-1)?.message ?? '控制器未返回动作结果';
     case 'capabilities':
-      return results.at(-1)?.message ?? '无法读取控制器能力';
+      return summarizeCapabilities(results.at(-1)?.data);
     case 'unsupported':
       return '当前不支持该动作。';
     case 'find':
@@ -168,6 +169,12 @@ export class HttpRobotAdapter implements RobotAdapter {
 export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
   readonly registrationKey = ROBOT_ADAPTER_REGISTRATION_KEY;
   private readonly logger = new Logger(RobotAdapterNode.name);
+  // The delivery lane stays free for HOLD, but the physical lane remains occupied
+  // until a measured terminal result, not merely an HTTP acceptance.
+  private readonly active = new Map<string, InProcessEventContext>();
+  private readonly waiting = new Map<string, InProcessEventContext[]>();
+  private readonly interruptEpoch = new Map<string, number>();
+  private readonly draining = new Set<string>();
 
   onModuleInit(): void {
     if (!AgentClasses.has(this.registrationKey)) {
@@ -177,6 +184,112 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
 
   async handle(context: InProcessEventContext): Promise<void> {
     if (context.event.eventType !== 'robot.execute.requested') return;
+    const plan = readPlan(context.event.payload);
+    if (!plan) throw new Error('robot.execute.requested payload has no valid plan');
+    const lane = stringConfig(
+      context.agentConfig.config,
+      'controller_url',
+      'http://127.0.0.1:7861',
+    ).replace(/\/$/, '');
+    const interrupt =
+      plan.steps.length === 1 && ['hold', 'stop'].includes(plan.steps[0]!.skill);
+    const bypass = plan.steps.every((step) =>
+      ['hold', 'stop', 'status', 'capabilities', 'set_speed'].includes(step.skill),
+    );
+    if (interrupt) {
+      this.interruptEpoch.set(lane, (this.interruptEpoch.get(lane) ?? 0) + 1);
+      await this.cancelWaiting(lane, '已按暂停或停止要求取消等待动作，未下发运动。');
+    }
+    if (bypass) {
+      await this.executeNow(context, () => {});
+      return;
+    }
+    if (this.draining.has(lane)) {
+      await this.publishStatus(context, 'execution.cancelled', {
+        message: '前一动作异常，正在清理等待队列；本动作未下发，请确认状态后重新下达。',
+      });
+      return;
+    }
+    const active = this.active.get(lane);
+    if (active) {
+      const queue = this.waiting.get(lane) ?? [];
+      if (queue.length >= 8) {
+        await this.publishStatus(context, 'execution.failed', {
+          message: '等待动作已满，这条动作未加入队列。',
+        });
+        return;
+      }
+      const predecessor = queue.at(-1) ?? active;
+      queue.push(context);
+      this.waiting.set(lane, queue);
+      await this.publishStatus(context, 'execution.queued', {
+        instruction: plan.intent,
+        waiting_for: predecessor.event.taskId,
+        active_instruction: readPlan(active.event.payload)?.intent,
+        queue_position: queue.length,
+        message:
+          '上一动作尚未结束，本动作已排队，尚未下发控制器；前一动作成功结束后继续。',
+      });
+      return;
+    }
+    await this.startMotion(context, lane);
+  }
+
+  private async cancelWaiting(lane: string, message: string): Promise<void> {
+    const queue = this.waiting.get(lane) ?? [];
+    this.waiting.delete(lane);
+    for (const context of queue) {
+      await this.publishStatus(context, 'execution.cancelled', {
+        instruction: readPlan(context.event.payload)?.intent,
+        message,
+      });
+    }
+  }
+
+  private startMotion(context: InProcessEventContext, lane: string): Promise<void> {
+    this.active.set(lane, context);
+    const epoch = this.interruptEpoch.get(lane) ?? 0;
+    let submitted!: () => void;
+    const accepted = new Promise<void>((resolve) => {
+      submitted = resolve;
+    });
+    void this.executeNow(context, submitted)
+      .catch((error) => {
+        this.logger.error(String(error));
+        return 'unknown' as const;
+      })
+      .then(async (outcome) => {
+        // A stopped old command cannot release a different/new command's lane.
+        if (this.active.get(lane) !== context) return;
+        if (
+          outcome !== 'completed' &&
+          !(outcome === 'cancelled' && epoch !== (this.interruptEpoch.get(lane) ?? 0))
+        ) {
+          this.draining.add(lane);
+          try {
+            await this.cancelWaiting(
+              lane,
+              '前一动作未成功完成，已取消等待动作，未下发运动；请根据当前状态重新下达。',
+            );
+          } finally {
+            this.draining.delete(lane);
+          }
+        }
+        this.active.delete(lane);
+        const queue = this.waiting.get(lane);
+        const next = queue?.shift();
+        if (!queue?.length) this.waiting.delete(lane);
+        if (next) await this.startMotion(next, lane);
+      })
+      .catch((error) => this.logger.error(String(error)))
+      .finally(submitted);
+    return accepted;
+  }
+
+  private async executeNow(
+    context: InProcessEventContext,
+    submitted: () => void,
+  ): Promise<'completed' | 'failed' | 'cancelled' | 'unknown'> {
     const plan = readPlan(context.event.payload);
     if (plan === null)
       throw new Error('robot.execute.requested payload has no valid plan');
@@ -210,7 +323,7 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
           message,
         });
         this.logger.error(message);
-        return;
+        return 'unknown';
       }
       if (!result.ok) {
         await this.publishStatus(context, 'execution.failed', {
@@ -220,7 +333,7 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
           message: result.message,
         });
         this.logger.warn(`skill ${step.skill} failed: ${result.message}`);
-        return;
+        return 'failed';
       }
       await this.publishStatus(context, 'execution.accepted', {
         task_id: taskId,
@@ -231,8 +344,8 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
       if (result.state === 'accepted' || result.state === 'started') {
         // Release the adapter delivery queue so voice HOLD can reach the arm.
         // Finite motion plans currently contain exactly one controller command.
-        void this.watchMotion(context, adapter, result, step);
-        return;
+        submitted();
+        return this.watchMotion(context, adapter, result, step);
       }
       results.push(result);
     }
@@ -250,6 +363,7 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
       })),
     });
     this.logger.info(`completed task=${taskId} intent=${plan.intent.intent}`);
+    return 'completed';
   }
 
   private async watchMotion(
@@ -257,7 +371,7 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
     adapter: HttpRobotAdapter,
     first: ControlResult,
     step: SkillStep,
-  ): Promise<void> {
+  ): Promise<'completed' | 'failed' | 'cancelled' | 'unknown'> {
     try {
       if (!first.commandId) throw new Error('控制器未返回命令编号，结果未知');
       const deadline = Date.now() + 120_000;
@@ -278,7 +392,9 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
             context,
             result.state === 'completed' && result.ok
               ? 'execution.completed'
-              : 'execution.failed',
+              : result.state === 'cancelled'
+                ? 'execution.cancelled'
+                : 'execution.failed',
             {
               skill: step.skill,
               step_id: step.id,
@@ -287,7 +403,11 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
               result: result.data,
             },
           );
-          return;
+          return result.state === 'completed' && result.ok
+            ? 'completed'
+            : result.state === 'cancelled'
+              ? 'cancelled'
+              : 'failed';
         }
         await new Promise((resolve) => setTimeout(resolve, 150));
       }
@@ -297,6 +417,7 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
         skill: step.skill,
         message: (error as Error).message,
       }).catch((e) => this.logger.error(String(e)));
+      return 'unknown';
     }
   }
 

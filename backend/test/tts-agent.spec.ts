@@ -8,7 +8,7 @@ import { RuntimeState } from '../src/app/runtime-state.service.js';
 
 describe('TtsAgent', () => {
   afterEach(() => vi.useRealTimers());
-  it('flushes at six characters, punctuation, timeout and final tail in order', async () => {
+  it('commits full sentences and only flushes an unfinished tail when the turn ends', async () => {
     vi.useFakeTimers();
     let handlers!: TtsHandlers;
     const appendText = vi.fn();
@@ -25,30 +25,33 @@ describe('TtsAgent', () => {
     );
     agent.startTurn('c', 1);
     handlers.onReady();
-    agent.append('c', 1, '这是一段');
-    await vi.advanceTimersByTimeAsync(100);
+    agent.append('c', 1, '正在移动，目标距离为2.');
+    await vi.advanceTimersByTimeAsync(1000);
     expect(appendText).not.toHaveBeenCalled();
-    agent.append('c', 1, '说明');
+    agent.append('c', 1, '5厘米；尚未到位');
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(appendText).not.toHaveBeenCalled();
+    agent.append('c', 1, '。第二句。下一句');
     await vi.advanceTimersByTimeAsync(0);
-    expect(appendText.mock.calls).toEqual([['这是一段说明']]);
-    agent.append('c', 1, '短句。');
-    await vi.advanceTimersByTimeAsync(0);
-    agent.append('c', 1, '你好');
-    await vi.advanceTimersByTimeAsync(120);
-    agent.append('c', 1, '尾巴');
+    expect(appendText.mock.calls).toEqual([
+      ['正在移动，目标距离为2.5厘米；尚未到位。'],
+      ['第二句。'],
+    ]);
+    agent.append('c', 1, '没有句号');
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(appendText).toHaveBeenCalledTimes(2);
     await agent.finishTurn('c', 1);
     expect(appendText.mock.calls).toEqual([
-      ['这是一段说明'],
-      ['短句。'],
-      ['你好'],
-      ['尾巴'],
+      ['正在移动，目标距离为2.5厘米；尚未到位。'],
+      ['第二句。'],
+      ['下一句没有句号'],
     ]);
     expect(finish).toHaveBeenCalledOnce();
     expect(appendText.mock.invocationCallOrder.at(-1)).toBeLessThan(
       finish.mock.invocationCallOrder[0]!,
     );
     await vi.advanceTimersByTimeAsync(500);
-    expect(appendText).toHaveBeenCalledTimes(4);
+    expect(appendText).toHaveBeenCalledTimes(3);
     agent.cancel('c');
   });
 
@@ -68,7 +71,7 @@ describe('TtsAgent', () => {
       },
     );
     agent.startTurn('c', 1);
-    agent.append('c', 1, '这是一段说明');
+    agent.append('c', 1, '这是一段说明。');
     agent.append('c', 1, '尾巴');
     agent.interrupt('c');
     handlers.onReady();
@@ -106,9 +109,9 @@ describe('TtsAgent', () => {
 
     agent.startTurn('c1', 1);
     handlers?.onReady();
-    agent.append('c1', 1, '你好');
+    agent.append('c1', 1, '你好。');
     await vi.waitFor(() => {
-      expect(appendText.mock.calls).toEqual([['你好']]);
+      expect(appendText.mock.calls).toEqual([['你好。']]);
     });
 
     const pcm = Buffer.alloc(4800, 0).toString('base64');

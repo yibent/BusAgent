@@ -2,6 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
+    "parallel_interaction": { "type": "boolean" },
     "model": { "type": "string" },
     "parser": { "enum": ["rules", "model"] }
   },

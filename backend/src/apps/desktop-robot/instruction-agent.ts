@@ -286,6 +286,20 @@ export class InstructionUnderstandingNode implements InProcessAgent, OnModuleIni
         at: Date.now(),
       });
     }
+    if (
+      context.agentConfig.config.parallel_interaction === true &&
+      ['chat', 'capabilities', 'status_query'].includes(parsed.intent)
+    ) {
+      // The independent interaction lane already answers these using read-only state.
+      // Keep semantic classification auditable, without a second reply or arm plan.
+      await context.publish({
+        event_type: 'interaction.classified',
+        correlation_id: context.event.correlationId,
+        causation_id: context.event.eventId,
+        payload: { instruction_id: context.event.eventId, intent: parsed.intent },
+      });
+      return;
+    }
     if (parsed.intent === 'chat') {
       await context.publish({
         event_type: 'conversation.requested',

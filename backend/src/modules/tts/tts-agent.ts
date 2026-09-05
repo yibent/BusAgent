@@ -25,9 +25,6 @@ interface Session {
   closed: boolean;
   finishing: boolean;
   pendingText: string;
-  chunkChars: number;
-  flushMs: number;
-  flushTimer?: ReturnType<typeof setTimeout>;
 }
 
 function asString(value: unknown, fallback: string): string {
@@ -101,8 +98,6 @@ export class TtsAgent implements InProcessAgent, OnModuleInit {
       closed: false,
       finishing: false,
       pendingText: '',
-      chunkChars: Math.max(1, asInt(config.chunk_chars, 6)),
-      flushMs: Math.max(20, asInt(config.flush_ms, 120)),
       connection: this.connect(
         {
           apiKey,
@@ -157,13 +152,13 @@ export class TtsAgent implements InProcessAgent, OnModuleInit {
     }
     this.gate.appendAssistantText(conversationId, text);
     session.pendingText += text;
-    if (
-      Array.from(session.pendingText).length >= session.chunkChars ||
-      /[，。！？；、,.!?;：:\n]/u.test(text)
-    ) {
-      this.flushText(session);
-    } else if (!session.flushTimer) {
-      session.flushTimer = setTimeout(() => this.flushText(session), session.flushMs);
+    // Commit complete sentences, not LLM token fragments or comma-separated
+    // clauses. A decimal point (e.g. 2.5 cm) must never split a spoken value.
+    let boundary: number;
+    while ((boundary = session.pendingText.indexOf('。')) !== -1) {
+      const sentence = session.pendingText.slice(0, boundary + 1);
+      session.pendingText = session.pendingText.slice(boundary + 1);
+      this.sendText(session, sentence);
     }
   }
 
@@ -202,11 +197,13 @@ export class TtsAgent implements InProcessAgent, OnModuleInit {
   }
 
   private flushText(session: Session): void {
-    if (session.flushTimer) clearTimeout(session.flushTimer);
-    delete session.flushTimer;
     if (session.closed) return;
     const text = session.pendingText;
     session.pendingText = '';
+    this.sendText(session, text);
+  }
+
+  private sendText(session: Session, text: string): void {
     // A punctuation-only tail needs no standalone audio segment.
     if (!/[\p{L}\p{N}]/u.test(text)) return;
     void this.sendWhenReady(session, () => session.connection.appendText(text));
@@ -260,7 +257,6 @@ export class TtsAgent implements InProcessAgent, OnModuleInit {
       return;
     }
     session.closed = true;
-    if (session.flushTimer) clearTimeout(session.flushTimer);
     session.pendingText = '';
     session.connection.close();
     this.sessions.delete(conversationId);

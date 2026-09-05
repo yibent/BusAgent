@@ -16,6 +16,7 @@
       ],
       "produces": [
         "instruction.parsed",
+        "interaction.classified",
         "conversation.requested"
       ],
       "configuration_schema": "schemas/instruction-config.json",
@@ -203,9 +204,17 @@
       "agent_id": "robot.dialogue",
       "endpoint": {
         "adapter": "in-process",
-        "registration_key": "DialogueAgent"
+      "registration_key": "DialogueAgent"
       },
       "consumes": [
+        "intent.created",
+        "interaction.classified",
+        "instruction.parsed",
+        "command.grounded",
+        "execution.accepted",
+        "execution.queued",
+        "execution.cancelled",
+        "plan.failed",
         "conversation.requested",
         "observation.ready",
         "execution.completed",

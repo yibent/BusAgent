@@ -32,6 +32,7 @@
       "required": true,
       "config": {
         "parser": "model",
+        "parallel_interaction": true,
         "model": "qwen3.8-flash",
         "reasoning": "low"
       }
@@ -141,6 +142,8 @@
         "prompt_file": "prompts/dialogue.md",
         "language": "zh-CN",
         "model": "qwen-flash",
+        "parallel_interaction": true,
+        "controller_url": "http://127.0.0.1:7861",
         "reasoning": "none"
       }
     },
@@ -149,8 +152,6 @@
       "required": true,
       "config": {
         "model": "qwen3-tts-flash-realtime",
-        "chunk_chars": 6,
-        "flush_ms": 120,
         "voice": "Cherry",
         "sample_rate": 24000,
         "language_type": "Chinese"
@@ -171,7 +172,12 @@
     }
   ],
   "routes": [
+    { "event": "execution.queued", "from": ["robot.device_adapter"], "to": ["robot.dialogue"] },
+    { "event": "execution.cancelled", "from": ["robot.device_adapter"], "to": ["robot.dialogue"] },
     { "event": "observation.ready", "from": ["robot.grounding_clarification"], "to": ["robot.dialogue"] },
+    { "event": "interaction.classified", "from": ["robot.instruction_understanding"], "to": ["robot.dialogue"] },
+    { "event": "execution.accepted", "from": ["robot.device_adapter"], "to": ["robot.dialogue"] },
+    { "event": "plan.failed", "from": ["robot.task_planner"], "to": ["robot.dialogue"] },
     {
       "event": "transcript.delta",
       "from": [
@@ -195,7 +201,8 @@
     {
       "event": "intent.created",
       "to": [
-        "robot.instruction_understanding"
+        "robot.instruction_understanding",
+        "robot.dialogue"
       ]
     },
     {
@@ -204,7 +211,8 @@
         "robot.instruction_understanding"
       ],
       "to": [
-        "robot.grounding_clarification"
+        "robot.grounding_clarification",
+        "robot.dialogue"
       ]
     },
     {
@@ -213,7 +221,8 @@
         "robot.grounding_clarification"
       ],
       "to": [
-        "robot.task_planner"
+        "robot.task_planner",
+        "robot.dialogue"
       ]
     },
     {

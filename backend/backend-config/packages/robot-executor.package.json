@@ -37,6 +37,8 @@
       },
       "consumes": ["robot.execute.requested"],
       "produces": [
+        "execution.queued",
+        "execution.cancelled",
         "execution.accepted",
         "execution.started",
         "execution.completed",

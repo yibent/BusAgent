@@ -15,10 +15,18 @@ describe('desktop robot runtime configuration', () => {
     ) as { agents: Array<{ agent_id: string; config: Record<string, unknown> }> };
     expect(
       app.agents.find((a) => a.agent_id === 'robot.dialogue')?.config,
-    ).toMatchObject({ model: 'qwen-flash', reasoning: 'none' });
+    ).toMatchObject({
+      model: 'qwen-flash',
+      reasoning: 'none',
+      parallel_interaction: true,
+    });
     expect(
       app.agents.find((a) => a.agent_id === 'robot.instruction_understanding')?.config,
-    ).toMatchObject({ model: 'qwen3.8-flash', reasoning: 'low' });
+    ).toMatchObject({
+      model: 'qwen3.8-flash',
+      reasoning: 'low',
+      parallel_interaction: true,
+    });
   });
   it('loads the real packages and validates every configured route', async () => {
     const configDir = resolve('backend-config');
@@ -39,7 +47,10 @@ describe('desktop robot runtime configuration', () => {
     // Typed input originates at the built-in system.input, speech at robot.stt.
     // Omitting a source restriction includes both without inventing an agent.
     expect(intentRoute?.from).toBeUndefined();
-    expect(intentRoute?.to).toEqual(['robot.instruction_understanding']);
+    expect(intentRoute?.to).toEqual([
+      'robot.instruction_understanding',
+      'robot.dialogue',
+    ]);
     expect(
       app.config.routes.find((route) => route.event === 'conversation.requested')?.to,
     ).toEqual(['robot.dialogue']);

@@ -9,7 +9,7 @@ socket.on('message', (raw) => {
   if (message.type === 'error') pending?.reject(new Error(message.message));
   if (message.type === 'reply.final') {
     console.log(JSON.stringify({ reply: message.text }));
-    if (message.text !== '正在执行。' && !message.text.includes('控制器已开始执行动作'))
+    if (!['正在执行。', '收到。'].includes(message.text) && !message.text.includes('控制器已开始执行动作'))
       pending?.resolve(message.text);
   }
   if (message.type === 'speech.end')

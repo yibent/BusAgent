@@ -153,7 +153,17 @@ export class TaskPlannerNode implements InProcessAgent, OnModuleInit {
     if (instruction === null) throw new Error('instruction.parsed payload is invalid');
     const taskVersion = context.event.taskVersion ?? 1;
     const plan = buildPlan(instruction, context.event.correlationId, taskVersion);
-    if (plan === null) return;
+    if (plan === null) {
+      await context.publish({
+        event_type: 'plan.failed',
+        correlation_id: context.event.correlationId,
+        causation_id: context.event.eventId,
+        ...(context.event.taskId ? { task_id: context.event.taskId } : {}),
+        task_version: taskVersion,
+        payload: { instruction, message: '这条指令尚不能生成可执行动作，未下发运动。' },
+      });
+      return;
+    }
     await context.publish({
       event_type: 'plan.proposed',
       correlation_id: context.event.correlationId,

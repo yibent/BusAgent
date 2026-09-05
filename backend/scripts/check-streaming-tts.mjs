@@ -6,12 +6,19 @@ import { ConversationHub } from '../dist/modules/conversation/conversation-hub.j
 import { SpeechGate } from '../dist/modules/conversation/speech-gate.js';
 import { TtsAgent, defaultTtsStreamFactory } from '../dist/modules/tts/tts-agent.js';
 const hub = new ConversationHub();
+const submitted = [];
 const agent = new TtsAgent(
   HostConfig.fromEnv(),
   new RuntimeState(),
   hub,
   new SpeechGate(),
-  defaultTtsStreamFactory,
+  (options, handlers) => {
+    const connection = defaultTtsStreamFactory(options, handlers);
+    return {
+      ...connection,
+      appendText(text) { submitted.push(text); connection.appendText(text); },
+    };
+  },
 );
 let finishRequested = false,
   packets = 0,
@@ -39,8 +46,13 @@ const timeout = new Promise((_, reject) => {
 });
 try {
   agent.startTurn('streaming-tts-check', 1);
-  agent.append('streaming-tts-check', 1, '这是一段测试');
-  // Deliberately keep text input open: require actual audio before finishTurn.
+  agent.append('streaming-tts-check', 1, '这是一段测试，距离为2.');
+  agent.append('streaming-tts-check', 1, '5厘米');
+  await new Promise(resolve => setTimeout(resolve, 500));
+  assert.deepEqual(submitted, [], 'No short chunks or decimal fragments before a sentence ends');
+  assert.equal(packets, 0);
+  agent.append('streaming-tts-check', 1, '。');
+  // A complete sentence can speak before the rest of the reply is generated.
   await Promise.race([heard, done, timeout]);
   assert.ok(packets > 0, 'Must hear audio before final text');
   assert.equal(finishRequested, false);
@@ -48,12 +60,13 @@ try {
   console.log(
     JSON.stringify({ first_audio_ms: firstAudioMs, audio_before_finish: true }),
   );
-  agent.append('streaming-tts-check', 1, '，后半句继续播报。');
+  agent.append('streaming-tts-check', 1, '第二句保持连贯。最后一句没有句号');
   finishRequested = true;
   await agent.finishTurn('streaming-tts-check', 1);
   await Promise.race([done, timeout]);
+  assert.deepEqual(submitted, ['这是一段测试，距离为2.5厘米。', '第二句保持连贯。', '最后一句没有句号']);
   assert.ok(packets > earlyPackets, 'Must also hear subsequent queued text');
-  console.log(JSON.stringify({ result: 'STREAMING TTS PASSED', packets }));
+  console.log(JSON.stringify({ result: 'SENTENCE TTS PASSED', packets, submitted }));
 } finally {
   clearTimeout(timer);
   agent.cancel('streaming-tts-check');
