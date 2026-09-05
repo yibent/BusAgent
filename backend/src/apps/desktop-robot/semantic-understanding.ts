@@ -51,8 +51,10 @@ const PROMPT = `你是 SO-101 的指令理解节点，只输出一个 JSON 对�
 当前完整指令优先级高于历史已解析结果；历史可能曾经解析错误，不能照抄其intent、frame或角度。只有“改成逆时针”“再高五厘米”等依赖上下文的补充才继承必要槽位。不从不同历史任务拼凑一个新动作；无法唯一指代时询问。
 字段仅有：intent, category, color, selector, joint, degrees, absolute, frame, axis, xyz_m, offset_m, opening, speed, question。不适用字段省略。
 intent枚举：home/move_joint/move_cartesian/rotate/gripper/set_speed/resume/target_move/find/track/status_query/capabilities/cancel/pick/pick_place/chat/unsupported。
-复位、归位、回到初始姿势、回到起始姿态均为home。暂停为cancel。继续暂停动作为resume。抓取和放置分别pick和pick_place，尚未实现，不要改成夹爪闭合。
+语音中的停止已由即时中断通道处理。若用户说“停止，然后移到红色方块上方10厘米”或“不复位了，停止，把红色方块抓起来”，应解析停止后的完整新要求为target_move或pick，不丢弃后续任务；仅要求停止时才为cancel。
+复位、归位、回到初始姿势、回到起始姿态均为home。暂停为cancel。继续暂停动作为resume。抓起、拿起单个物体为pick，必须提取category/color/selector，不能改成夹爪闭合。抓取由控制器定位、接近、闭环抓取及抬升验证，不估计物体坐标。搬运并放置为pick_place，尚未接入，不能只执行其中的抓取。
 类别category用英文常见物体名，如bolt/nut/block/wrench/power_drill/star；color也用英文。有没有、能否看到、检查是否存在、看一下均为find（不能编造找到或数量）。指代“它/刚才那个”可继承最近明确的类别颜色；无法确定就询问。
+pick目前仅支持单个物体。多个、全部或无法用最左/最右确定的第几个目标，应设置question请用户指定一个物体，不能默默只抓一个。递给人或搬到另一位置属于未接入的搬运，不得缩减为原地抓取。
 target_move=末端到物体相对位置，比如“夹爪去黄色螺栓上方10厘米” => {"intent":"target_move","category":"bolt","color":"yellow","offset_m":[0,0,0.1]}。xyz_m必须省略：你不能估计物体世界坐标，交由相机定位。
 offset_m相对于物体可见表面测点，世界坐标上Z正、下Z负、前X正、后X负、左Y正、右Y负。selector仅leftmost/rightmost，用于同类物体多候选；非最左/最右不得擅自挑选。
 move_cartesian=从机械臂当前位置相对移动或用户给定的绝对XYZ；“向上10厘米” => xyz_m:[0,0,0.1],absolute:false。单位米，距离必须来自用户，不能用物体移动意图的距离冒充当前末端相对移动。绝对坐标必须由用户给出。
@@ -138,11 +140,11 @@ export function semanticFrame(raw: unknown, text: string): ParsedInstruction {
     default:
       instruction.intent = f.intent;
   }
-  if (['find', 'track'].includes(f.intent) && !f.category)
+  if (['find', 'track', 'pick'].includes(f.intent) && !f.category)
     instruction.clarification_question ||= '请说明要查看或跟随哪个物体。';
-  if (['pick', 'pick_place', 'unsupported'].includes(f.intent))
+  if (['pick_place', 'unsupported'].includes(f.intent))
     instruction.clarification_question ||=
-      '当前不支持抓取、搬运、放置或这项复杂操作；可以移动到物体附近，但不代表抓取。';
+      '当前尚未接入搬运放置或这项复杂操作；可以单独下达抓取指令。';
   instruction.needs_clarification = Boolean(instruction.clarification_question);
   return instruction;
 }

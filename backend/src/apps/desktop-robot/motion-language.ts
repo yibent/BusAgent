@@ -79,7 +79,7 @@ export function motionLanguage(
       { degrees_per_second: value },
       Number.isFinite(value)
         ? null
-        : '请说明运动速度，例如每秒20度，范围为1到60度每秒。',
+        : '请说明运动速度，例如每秒20度，范围为1到120度每秒。',
     );
   }
   if (

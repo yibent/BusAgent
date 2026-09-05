@@ -224,7 +224,8 @@
         "plan.rejected",
         "transcript.delta",
         "transcript.final",
-        "execution.started"
+        "execution.started",
+        "execution.progress"
       ],
       "produces": [
         "reply.created"

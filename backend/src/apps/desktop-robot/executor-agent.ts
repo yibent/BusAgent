@@ -376,14 +376,36 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
       if (!first.commandId) throw new Error('控制器未返回命令编号，结果未知');
       const deadline = Date.now() + 120_000;
       let started = false;
+      let lastPhase = '';
+      let lastProgressAt = 0;
       while (Date.now() < deadline) {
         const result = await adapter.result(first.commandId);
         if (!started && result.state === 'started') {
           started = true;
+          lastProgressAt = Date.now();
           await this.publishStatus(context, 'execution.started', {
             skill: step.skill,
             step_id: step.id,
             command_id: first.commandId,
+            message: result.message,
+          });
+        }
+        const detail = result.data as Record<string, unknown> | undefined;
+        const phase = typeof detail?.phase === 'string' ? detail.phase : '';
+        if (
+          started &&
+          result.state === 'started' &&
+          phase &&
+          phase !== lastPhase &&
+          Date.now() - lastProgressAt >= 6_000
+        ) {
+          lastPhase = phase;
+          lastProgressAt = Date.now();
+          await this.publishStatus(context, 'execution.progress', {
+            skill: step.skill,
+            step_id: step.id,
+            command_id: first.commandId,
+            phase,
             message: result.message,
           });
         }

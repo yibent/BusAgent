@@ -95,6 +95,14 @@ describe('SttAgent', () => {
     expect(published.some((e) => e.event_type === 'transcript.final')).toBe(true);
     const intent = published.find((e) => e.event_type === 'intent.created');
     expect(intent?.payload.text).toBe('帮我找到绿色咖啡杯');
+    const turnId = intent?.payload.utterance_id;
+    expect(turnId).toBe(`${started.streamId}:0`);
+    expect(deltas.every((e) => e.payload.utterance_id === turnId)).toBe(true);
+    expect(deltas.every((e) => e.payload.hypothesis === '帮我找到绿色咖啡杯')).toBe(true);
+    handlers?.onPartial({ text: '停止', isFinal: true, speechFinal: true });
+    await vi.advanceTimersByTimeAsync(900);
+    expect(published.filter((e) => e.event_type === 'intent.created').at(-1)?.payload.utterance_id)
+      .toBe(`${started.streamId}:1`);
   });
 
   it('merges speech separated by a brief pause before creating an intent', async () => {

@@ -46,6 +46,7 @@ describe('Qwen TTS committed segments', () => {
         voice: 'Cherry',
         languageType: 'Chinese',
         sampleRate: 24000,
+        speechRate: 1.15,
       },
       { onReady: vi.fn(), onAudio: vi.fn(), onError: vi.fn(), onDone },
     );
@@ -53,7 +54,7 @@ describe('Qwen TTS committed segments', () => {
     socket.emit('session.created');
     expect(socket.sent[0]).toMatchObject({
       type: 'session.update',
-      session: { mode: 'commit' },
+      session: { mode: 'commit', speech_rate: 1.15, sample_rate: 24000 },
     });
     socket.emit('session.updated');
     connection.appendText('第一段');

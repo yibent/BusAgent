@@ -43,6 +43,7 @@ interface Session {
   bargeInMinChars: number;
   listener: SttSessionListener;
   pendingFinalText: string;
+  utteranceIndex: number;
   settleTimer: ReturnType<typeof setTimeout> | undefined;
   forceFlush: boolean;
   work: Promise<void>;
@@ -145,6 +146,7 @@ export class SttAgent implements InProcessAgent, OnModuleInit {
       bargeInMinChars,
       listener,
       pendingFinalText: '',
+      utteranceIndex: 0,
       settleTimer: undefined,
       forceFlush: false,
       work: Promise.resolve(),
@@ -251,6 +253,8 @@ export class SttAgent implements InProcessAgent, OnModuleInit {
       }
       const payload = {
         stream_id: session.streamId,
+        utterance_id: `${session.streamId}:${session.utteranceIndex}`,
+        hypothesis: joinUtteranceParts(session.pendingFinalText, text),
         seq: delta.seq,
         text: delta.text,
         committed: delta.committed,
@@ -298,12 +302,15 @@ export class SttAgent implements InProcessAgent, OnModuleInit {
     session.pendingFinalText = '';
     const finalPayload = {
       stream_id: session.streamId,
+      utterance_id: `${session.streamId}:${session.utteranceIndex}`,
       text,
     };
+    session.utteranceIndex += 1;
     await this.publish(session, 'transcript.final', finalPayload);
     await this.publish(session, 'intent.created', {
       text,
       stream_id: session.streamId,
+      utterance_id: finalPayload.utterance_id,
       source: 'stt',
     });
     session.listener.onFinal?.(finalPayload);

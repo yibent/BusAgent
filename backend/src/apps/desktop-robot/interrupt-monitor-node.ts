@@ -26,7 +26,8 @@ export function isImmediateInterrupt(text: string): boolean {
 export class InterruptMonitorNode implements InProcessAgent, OnModuleInit {
   readonly registrationKey = INTERRUPT_MONITOR_REGISTRATION_KEY;
   private readonly logger = new Logger(InterruptMonitorNode.name);
-  private readonly lastText = new Map<string, string>();
+  private readonly interrupted = new Map<string, number>();
+  private readonly legacyLatch = new Set<string>();
 
   onModuleInit(): void {
     if (!AgentClasses.has(this.registrationKey)) {
@@ -37,18 +38,30 @@ export class InterruptMonitorNode implements InProcessAgent, OnModuleInit {
   async handle(context: InProcessEventContext): Promise<void> {
     if (!['transcript.delta', 'transcript.final'].includes(context.event.eventType))
       return;
-    const text = textPayload(context.event.payload);
-    if (!isImmediateInterrupt(text)) {
-      this.lastText.delete(context.event.correlationId);
-      return;
+    const payload = context.event.payload as { hypothesis?: string; utterance_id?: string; stream_id?: string };
+    const text = payload?.hypothesis ?? textPayload(context.event.payload);
+    const conversation = `${context.event.correlationId}:${payload?.stream_id ?? 'legacy'}`;
+    const key = payload?.utterance_id ? `${conversation}:${payload.utterance_id}` : conversation;
+    const final = context.event.eventType === 'transcript.final';
+    const alreadySent = payload?.utterance_id ? this.interrupted.has(key) : this.legacyLatch.has(key);
+    // The ASR tail changes on every token. Latch the speech turn, not its text;
+    // unrelated chunks must not re-arm a stop, and final must not duplicate it.
+    if (final && !payload?.utterance_id) this.legacyLatch.delete(key);
+    if (!isImmediateInterrupt(text) || alreadySent) return;
+    if (payload?.utterance_id) {
+      this.interrupted.set(key, Date.now());
+      if (this.interrupted.size > 2000)
+        this.interrupted.delete(this.interrupted.keys().next().value!);
+    } else if (!final) {
+      this.legacyLatch.add(key);
+      if (this.legacyLatch.size > 2000)
+        this.legacyLatch.delete(this.legacyLatch.values().next().value!);
     }
-    if (this.lastText.get(context.event.correlationId) === text) return;
-    this.lastText.set(context.event.correlationId, text);
     await context.publish({
       event_type: 'interrupt.requested',
       correlation_id: context.event.correlationId,
       causation_id: context.event.eventId,
-      task_id: `task_interrupt_${context.event.eventId}`,
+      task_id: `task_interrupt_${payload?.utterance_id ?? context.event.eventId}`,
       task_version: 1,
       priority: 0,
       payload: {

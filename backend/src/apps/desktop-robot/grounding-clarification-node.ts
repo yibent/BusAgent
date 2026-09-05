@@ -76,7 +76,8 @@ export class GroundingClarificationNode implements InProcessAgent, OnModuleInit 
       );
       return;
     }
-    if (instruction.target.spatial_ref) {
+    // Grasp resolves its selector with a fresh frame after the physical queue.
+    if (instruction.target.spatial_ref && instruction.intent !== 'pick') {
       await context.publish({
         ...common,
         event_type: 'clarification.requested',

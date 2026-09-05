@@ -116,6 +116,7 @@ export class TaskConversation {
         delete task.queuePosition;
         break;
       case 'execution.started':
+      case 'execution.progress':
         stage = 'executing';
         break;
       case 'clarification.requested':
@@ -279,6 +280,8 @@ export function progressText(task: ConversationTask): string {
   if (task.stage === 'queued') return '动作仍在等待队列，尚未下发控制器。';
   if (task.stage === 'submitted') return '动作已提交，等待控制器开始。';
   if (task.stage === 'executing')
-    return `${actionName(task.instruction)}仍在进行，尚未确认到位。`;
+    return task.instruction?.intent === 'pick'
+      ? '抓取仍在进行，尚未确认夹持与抬升成功。'
+      : `${actionName(task.instruction)}仍在进行，尚未确认到位。`;
   return '还在确认这条指令，尚未收到执行反馈。';
 }

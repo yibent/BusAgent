@@ -139,16 +139,12 @@ function destinationOf(text: string): DestinationSpec | null {
   return { type: 'bin_cell', bin_id: bin, cell_index: cell };
 }
 
-function clarificationFor(
-  intent: RobotIntentName,
-  target: TargetSpec,
-  destination: DestinationSpec | null,
-): string | null {
+function clarificationFor(intent: RobotIntentName, target: TargetSpec): string | null {
   if (['find', 'pick', 'pick_place'].includes(intent) && !target.category) {
     return '你希望我处理哪个物体？';
   }
-  if (intent === 'pick_place' && destination === null) {
-    return '你希望把它放到哪个料箱格？';
+  if (intent === 'pick_place') {
+    return '放置尚未接入；可以单独下达抓取指令。';
   }
   return null;
 }
@@ -173,7 +169,7 @@ export function parseInstruction(text: string): ParsedInstruction {
     motion?.clarification_question ??
     (intent === 'unsupported'
       ? '当前无法将这条要求转换为已支持的动作。请使用关节转动、末端平移、归位、夹爪开合或查询能力等具体指令。'
-      : clarificationFor(intent, target, destination));
+      : clarificationFor(intent, target));
   return {
     intent,
     target,
@@ -240,7 +236,10 @@ export class InstructionUnderstandingNode implements InProcessAgent, OnModuleIni
       parsed = parseInstruction(previous.text + '，' + text);
     }
     this.pending.delete(context.event.correlationId);
-    if (this.host?.dashscopeApiKey && parsed.intent !== 'cancel') {
+    if (this.host?.dashscopeApiKey && (parsed.intent !== 'cancel' ||
+        (context.event.payload as { source?: string }).source === 'stt')) {
+      // Voice stop has already used the immediate lane. Still interpret the
+      // complete utterance, e.g. "stop, then move above the red block".
       const remembered = this.history.get(context.event.correlationId);
       try {
         parsed = await understandSemantic(

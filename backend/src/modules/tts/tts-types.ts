@@ -18,6 +18,7 @@ export interface TtsConnectOptions {
   voice: string;
   sampleRate: number;
   languageType: string;
+  speechRate?: number | undefined;
 }
 
 export type TtsStreamFactory = (

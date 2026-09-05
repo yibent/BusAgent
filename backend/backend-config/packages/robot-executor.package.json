@@ -41,6 +41,7 @@
         "execution.cancelled",
         "execution.accepted",
         "execution.started",
+        "execution.progress",
         "execution.completed",
         "execution.failed",
         "execution.unknown"

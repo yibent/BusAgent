@@ -88,6 +88,9 @@ export function connectQwenTts(
         language_type: options.languageType,
         response_format: 'pcm',
         sample_rate: options.sampleRate,
+        ...(options.speechRate === undefined
+          ? {}
+          : { speech_rate: options.speechRate }),
       },
     });
   };

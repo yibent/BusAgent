@@ -173,6 +173,7 @@ describe('DialogueAgent', () => {
 
   it.each([
     ['execution.started', {}, '正在执行。'],
+    ['execution.progress', { message: '正在验证目标是否抬起。' }, '正在验证目标是否抬起。'],
     ['execution.completed', {}, '已完成。'],
     ['execution.unknown', {}, '结果未知，控制端未确认。'],
     [

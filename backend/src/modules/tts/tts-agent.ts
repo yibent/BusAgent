@@ -21,6 +21,7 @@ interface Session {
   sampleRate: number;
   connection: TtsConnection;
   ready: Promise<void>;
+  releaseReady: () => void;
   started: boolean;
   closed: boolean;
   finishing: boolean;
@@ -94,6 +95,7 @@ export class TtsAgent implements InProcessAgent, OnModuleInit {
       turn,
       sampleRate,
       ready,
+      releaseReady: resolveReady,
       started: false,
       closed: false,
       finishing: false,
@@ -106,6 +108,11 @@ export class TtsAgent implements InProcessAgent, OnModuleInit {
           voice,
           sampleRate,
           languageType,
+          speechRate:
+            typeof config.speech_rate === 'number' &&
+            Number.isFinite(config.speech_rate)
+              ? Math.min(2, Math.max(0.5, config.speech_rate))
+              : undefined,
         },
         {
           onReady: () => {
@@ -118,6 +125,7 @@ export class TtsAgent implements InProcessAgent, OnModuleInit {
             this.closeSession(conversationId, turn);
           },
           onError: (error) => {
+            if (session.closed) return;
             this.logger.error(
               `TTS stream conv=${conversationId} failed: ${error.message}`,
             );
@@ -257,6 +265,9 @@ export class TtsAgent implements InProcessAgent, OnModuleInit {
       return;
     }
     session.closed = true;
+    // Unblock finishTurn/queued writes even if cancellation precedes the
+    // websocket handshake. sendWhenReady checks closed before sending.
+    session.releaseReady();
     session.pendingText = '';
     session.connection.close();
     this.sessions.delete(conversationId);

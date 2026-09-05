@@ -18,9 +18,12 @@ export function summarizeCapabilities(value: unknown): string {
   if (skills.has('home')) groups.push('复位');
   if (skills.has('gripper')) groups.push('夹爪开合');
   if (skills.has('hold') || skills.has('stop')) groups.push('暂停');
+  if (skills.has('grasp')) groups.push('单物体抓取与抬升验证');
   const support = groups.length ? `支持${groups.join('、')}。` : '当前无可用基础动作。';
   return (
-    support + (!skills.has('grasp') || !skills.has('place') ? '抓取和放置未实现。' : '')
+    support +
+    (!skills.has('grasp') ? '抓取未接入。' : '') +
+    (!skills.has('place') ? '放置未实现。' : '')
   );
 }
 
@@ -29,6 +32,10 @@ export function summarizeMotion(value: unknown, following = false): string {
   const last = record(motion.last_command);
   if (motion.simulation_playing === false)
     return '仿真已暂停，不能声称机械臂正在运动。';
+  if (motion.active_command_id && last.skill === 'grasp')
+    return typeof last.message === 'string'
+      ? last.message
+      : '抓取正在处理，尚未确认成功。';
   if (motion.mode === 'moving') return '机械臂正在执行动作，尚未确认到位。';
   if (motion.active_command_id) return '控制器已接收动作，等待仿真执行。';
   if (following) return '目标跟随已启用，是否到位尚未确认。';

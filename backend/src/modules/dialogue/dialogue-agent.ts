@@ -34,7 +34,7 @@ const FAST_INTERACTION_PROMPT = `你现在负责与语义理解并行的快速�
 用户请求动作、观察场景、补充方向/角度或修改任务：自然地用一句短话承接，说明你在处理请求，不要每次机械回复“收到”。不要宣称动作已开始、复述未核实参数、选择关节方向或自行澄清；后续真实事件会提供进展与结果。
 你与执行系统是同一个助手，不把任务推给“后台”或“其他agent”。结合任务上下文承接追问，记住刚才的澄清和实际结果。语气词和附和不当作新操作。
 闲聊、问候、致谢、身份问题：直接极简回答，不要求用户改口，也不引导查询能力。
-查询能力：根据提供的实时 capability_summary 简短回答，最多两句；不主动展开 supported_skills 全表，抓取放置未实现必须说明。只有用户要求详细列举时才展开。
+查询能力：根据提供的实时 capability_summary 简短回答，最多两句；不主动展开 supported_skills 全表。抓取与放置分别以实时支持状态为准，不得把未实现的放置扩展为抓取也未实现。问候后带有能力/状态问题时优先回答实际问题，不只问候或自我介绍。只有用户要求详细列举时才展开。
 查询当前状态（现在在做什么、动了吗、好了没）：直接采用 status_summary 的结论。last_command 是历史记录，其 skill=home 不表示正在复位；mode=hold/idle 且 active_command_id=null 时绝不能说正在执行。比如 status_summary=“当前保持位置；上次复位已完成。”就原样回答这句。该已完成结论来自控制器实测状态，可以汇报，不需要等待另一个总线事件。
 查询失败原因：依据 robot_state.last_command.message，失败就是失败。available=false时明确无法确认，不编造。
 查询任务进度时还要结合任务上下文：控制器保持位置不代表待理解或待定位的新任务已完成；说清当前等待环节。没有新任务时采用实时控制器结论。失败原因或刚才的澄清优先对应用户追问的那项任务，不套用另一条历史动作。
@@ -47,6 +47,8 @@ clarification只问事件指定的缺失项，保留必要选项；observation�
 
 function feedbackBoundary(eventType: string): string {
   const boundaries: Record<string, string> = {
+    'execution.progress':
+      '这是控制器当前阶段的实测反馈。简短说明正在做什么；闭爪或抬升进行中都不等于抓取成功，不重复播报历史阶段。',
     'execution.started':
       '这是控制器确认的本动作开始事件，应明确开始的是哪个动作。若该动作之前排队，且after_task对应任务已完成，可简短衔接上一动作结束、本动作现在开始，不要孤立地说轨迹开始。',
     'execution.queued':
@@ -94,6 +96,7 @@ function factualReply(eventType: string, payload: unknown): string | null {
     return message || '已完成。';
   }
   if (eventType === 'execution.started') return '正在执行。';
+  if (eventType === 'execution.progress') return message || '动作仍在进行。';
   if (eventType === 'execution.queued' || eventType === 'execution.cancelled')
     return message || '当前动作尚未执行。';
   if (eventType === 'execution.failed') {
@@ -505,7 +508,7 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
               JSON.stringify(
                 this.tasks.focus(conversationId, `task_${context.event.eventId}`),
               )
-            : '你在普通交流分支，没有执行工具或任何动作事件。不能承诺执行、报告进度或列举未核验能力。操作请求应提示用户给出具体指令；能力问题应提示用户说“查询能力”。抓取和放置尚未实现。'),
+            : '你在普通交流分支，没有执行工具或任何动作事件。不能承诺执行、报告进度或列举未核验能力。操作请求应提示用户给出具体指令；能力问题应提示用户说“查询能力”。仅以实时控制器能力为准，放置尚未接入。'),
       },
       ...history.slice(-MAX_TURNS * 2),
     ];

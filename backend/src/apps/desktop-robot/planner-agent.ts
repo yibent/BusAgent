@@ -69,49 +69,20 @@ export function buildPlan(
             ];
       break;
     case 'pick':
+      if (instruction.needs_clarification || !instruction.target.category) return null;
       steps = [
-        { id: 1, skill: 'perceive', params: {} },
-        { id: 2, skill: 'select_target', params: targetParams(instruction) },
-        { id: 3, skill: 'plan_grasp', params: { target: instruction.target } },
-        { id: 4, skill: 'move_to', params: { target: 'pregrasp' } },
-        { id: 5, skill: 'grasp', params: {}, verify: 'gripper holding target' },
-      ];
-      break;
-    case 'pick_place': {
-      const destination = instruction.destination;
-      if (destination === null) return null;
-      steps = [
-        { id: 1, skill: 'perceive', params: {}, why: 'refresh scene graph' },
-        { id: 2, skill: 'select_target', params: targetParams(instruction) },
-        { id: 3, skill: 'plan_grasp', params: { target: instruction.target } },
-        { id: 4, skill: 'move_to', params: { target: 'pregrasp' } },
-        { id: 5, skill: 'grasp', params: {}, verify: 'gripper holding target' },
+        // Ground only after this whole transaction acquires the physical lane.
         {
-          id: 6,
-          skill: 'transport',
-          params: { to: `preplace(${destination.bin_id},${destination.cell_index})` },
-        },
-        {
-          id: 7,
-          skill: 'place',
-          params: {
-            bin: destination.bin_id,
-            cell: destination.cell_index,
-            align: 'long_axis',
-          },
-        },
-        {
-          id: 8,
-          skill: 'verify_placement',
-          params: {
-            bin: destination.bin_id,
-            cell: destination.cell_index,
-          },
-          on_fail: 'recover',
+          id: 1,
+          skill: 'grasp',
+          params: { target: instruction.target },
+          verify: 'visual lift verification',
         },
       ];
       break;
-    }
+    case 'pick_place':
+      // Do not execute only the first half of an unsupported compound request.
+      return null;
     case 'status_query':
       steps = [{ id: 1, skill: 'status', params: {} }];
       break;

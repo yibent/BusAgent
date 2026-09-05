@@ -8,6 +8,42 @@ import { RuntimeState } from '../src/app/runtime-state.service.js';
 
 describe('TtsAgent', () => {
   afterEach(() => vi.useRealTimers());
+  it.each([
+    [1.15, 1.15],
+    [undefined, undefined],
+    [NaN, undefined],
+    [3, 2],
+    [0.1, 0.5],
+  ])(
+    'forwards speech rate %s as %s without changing PCM sample rate',
+    (input, expected) => {
+      const runtime = new RuntimeState();
+      vi.spyOn(runtime, 'isReady').mockReturnValue(true);
+      vi.spyOn(runtime, 'current', 'get').mockReturnValue({
+        agents: new Map([
+          ['robot.tts', { runtimeConfig: { config: { speech_rate: input } } }],
+        ]),
+      } as unknown as RuntimeState['current']);
+      const connect = vi.fn(() => ({
+        appendText: vi.fn(),
+        finish: vi.fn(),
+        close: vi.fn(),
+      }));
+      const agent = new TtsAgent(
+        HostConfig.fromEnv({ DASHSCOPE_API_KEY: 'test' }),
+        runtime,
+        new ConversationHub(),
+        new SpeechGate(),
+        connect,
+      );
+      agent.startTurn('rate', 1);
+      expect(connect).toHaveBeenCalledWith(
+        expect.objectContaining({ speechRate: expected, sampleRate: 24000 }),
+        expect.any(Object),
+      );
+      agent.cancel('rate');
+    },
+  );
   it('commits full sentences and only flushes an unfinished tail when the turn ends', async () => {
     vi.useFakeTimers();
     let handlers!: TtsHandlers;
@@ -73,7 +109,10 @@ describe('TtsAgent', () => {
     agent.startTurn('c', 1);
     agent.append('c', 1, '这是一段说明。');
     agent.append('c', 1, '尾巴');
+    const finished = agent.finishTurn('c', 1);
     agent.interrupt('c');
+    await finished;
+    handlers.onError(new Error('late close after intentional cancellation'));
     handlers.onReady();
     await vi.advanceTimersByTimeAsync(500);
     expect(appendText).not.toHaveBeenCalled();

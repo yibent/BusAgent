@@ -73,6 +73,28 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe('physical motion queue', () => {
+  it('queues the whole grasp behind motion and waits for verified completion', async () => {
+    const t = setup();
+    await t.node.handle(t.context('home', '归位'));
+    await t.node.handle(t.context('pick', '拿起绿色方块'));
+    expect(t.commands.map((c) => c.skill)).toEqual(['home']);
+    await t.complete('home');
+    expect(t.commands.map((c) => c.skill)).toEqual(['home', 'grasp']);
+    await t.node.handle(t.context('next', '底座顺时针转90度'));
+    expect(t.commands.map((c) => c.skill)).toEqual(['home', 'grasp']);
+    await t.complete('pick', 'failed');
+    expect(t.commands.map((c) => c.skill)).toEqual(['home', 'grasp']);
+    expect(
+      t.events.some(
+        (e) => e.event_type === 'execution.cancelled' && e.task_id === 'next',
+      ),
+    ).toBe(true);
+    expect(
+      t.events.some(
+        (e) => e.event_type === 'execution.completed' && e.task_id === 'pick',
+      ),
+    ).toBe(false);
+  });
   it('waits for measured completion, then starts the next arm action once', async () => {
     const t = setup();
     await t.node.handle(t.context('grip', '打开夹爪'));

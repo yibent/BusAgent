@@ -114,6 +114,7 @@ const executionNodes: ArchitectureNode[] = [
       "execution.cancelled",
       "execution.accepted",
       "execution.started",
+      "execution.progress",
       "execution.completed",
       "execution.failed",
       "execution.unknown",
@@ -138,6 +139,7 @@ const stageByEvent: Record<string, number> = {
   "execution.queued": 5,
   "execution.cancelled": 6,
   "execution.started": 5,
+  "execution.progress": 5,
   "execution.completed": 6,
   "execution.failed": 6,
   "execution.unknown": 6,
@@ -159,6 +161,7 @@ const eventNames: Record<string, string> = {
   "execution.queued": "等待上一动作完成 · 尚未下发",
   "execution.cancelled": "动作已取消",
   "execution.started": "开始执行技能",
+  "execution.progress": "执行阶段更新",
   "execution.completed": "任务执行完成",
   "execution.failed": "任务执行失败",
   "execution.unknown": "执行结果未知",
@@ -182,6 +185,8 @@ function eventDetail(event: RobotBusEvent): string {
       : "快速交互";
   }
   const skill = event.payload.skill;
+  if (event.eventType === "execution.progress" && typeof event.payload.message === "string")
+    return event.payload.message;
   if (typeof skill === "string") return skill;
   const message = event.payload.message;
   if (typeof message === "string") return message;
@@ -231,6 +236,7 @@ function activeNodeForEvent(eventType?: string): string | undefined {
     "robot.execute.requested": "adapter",
     "execution.accepted": "adapter",
     "execution.started": "adapter",
+    "execution.progress": "adapter",
   };
   return eventType ? routing[eventType] : undefined;
 }

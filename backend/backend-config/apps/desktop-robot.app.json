@@ -153,6 +153,7 @@
       "config": {
         "model": "qwen3-tts-flash-realtime",
         "voice": "Cherry",
+        "speech_rate": 1.15,
         "sample_rate": 24000,
         "language_type": "Chinese"
       }
@@ -323,6 +324,11 @@
       "to": [
         "robot.dialogue"
       ]
+    },
+    {
+      "event": "execution.progress",
+      "from": ["robot.device_adapter"],
+      "to": ["robot.dialogue"]
     },
     {
       "event": "execution.started",

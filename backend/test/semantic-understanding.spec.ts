@@ -10,6 +10,25 @@ import { makeEvent } from './helpers.js';
 import type { InProcessEventContext } from '../src/adapters/in-process/agent-classes.js';
 
 describe('semantic frames and RGB-D grounding', () => {
+  it('keeps a natural pick as one targeted grasp, not gripper closure', () => {
+    const pick = semanticFrame(
+      { intent: 'pick', category: 'block', color: 'green', selector: 'leftmost' },
+      '拿起最左边的绿色小方块',
+    );
+    expect(pick.needs_clarification).toBe(false);
+    expect(pick.intent).toBe('pick');
+    expect(pick.target).toMatchObject({
+      category: 'block',
+      attributes: { color: 'green' },
+      spatial_ref: 'leftmost',
+    });
+    expect(pick.motion).toBeUndefined();
+    expect(semanticFrame({ intent: 'pick' }, '抓起来').needs_clarification).toBe(true);
+    expect(
+      semanticFrame({ intent: 'pick_place', category: 'block' }, '抓起并放下')
+        .needs_clarification,
+    ).toBe(true);
+  });
   afterEach(() => vi.unstubAllGlobals());
   it('does not dispatch a late object goal after interruption', async () => {
     let finish!: (response: Response) => void;

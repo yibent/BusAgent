@@ -43,6 +43,43 @@ function agentContext(
 }
 
 describe('robot instruction understanding and planning', () => {
+  it('interrupts only once per ASR utterance across revised chunks and final', async () => {
+    const monitor = new InterruptMonitorNode();
+    const events: Array<Record<string, unknown>> = [];
+    for (const text of ['停止', '停止，把', '红色', '停止，把红色方块抓起来']) {
+      await monitor.handle(agentContext('transcript.delta', {
+        text, hypothesis: text, stream_id: 's1', utterance_id: 's1:0',
+      }, events));
+    }
+    await monitor.handle(agentContext('transcript.final', {
+      text: '停止，把红色方块抓起来', stream_id: 's1', utterance_id: 's1:0',
+    }, events));
+    expect(events).toHaveLength(1);
+    await monitor.handle(agentContext('transcript.delta', {
+      text: '停止', stream_id: 's1', utterance_id: 's1:1',
+    }, events));
+    expect(events).toHaveLength(2);
+  });
+
+  it('uses full hypothesis when stop crosses a committed chunk boundary', async () => {
+    const events: Array<Record<string, unknown>> = [];
+    await new InterruptMonitorNode().handle(agentContext('transcript.delta', {
+      text: '止，抓起来', hypothesis: '停止，抓起来', utterance_id: 's:1',
+    }, events));
+    expect(events).toHaveLength(1);
+  });
+
+  it('does not rearm legacy chunks until the utterance final', async () => {
+    const monitor = new InterruptMonitorNode();
+    const events: Array<Record<string, unknown>> = [];
+    for (const text of ['停止', '红色', '停止，把红色'])
+      await monitor.handle(agentContext('transcript.delta', { text }, events));
+    await monitor.handle(agentContext('transcript.final', { text: '停止，把红色' }, events));
+    expect(events).toHaveLength(1);
+    await monitor.handle(agentContext('transcript.delta', { text: '停止' }, events));
+    expect(events).toHaveLength(2);
+  });
+
   it('parses a pick-place command into the report schema', () => {
     const parsed = parseInstruction('把左侧的红色滚柱放到三号格');
     expect(parsed).toMatchObject({
@@ -53,7 +90,7 @@ describe('robot instruction understanding and planning', () => {
         spatial_ref: '左侧',
       },
       destination: { type: 'bin_cell', bin_id: 'A', cell_index: 3 },
-      needs_clarification: false,
+      needs_clarification: true,
     });
   });
 
@@ -61,7 +98,7 @@ describe('robot instruction understanding and planning', () => {
     const parsed = parseInstruction('把左边的扳手放好');
     expect(parsed.intent).toBe('pick_place');
     expect(parsed.needs_clarification).toBe(true);
-    expect(parsed.clarification_question).toContain('哪个料箱格');
+    expect(parsed.clarification_question).toContain('放置尚未接入');
 
     const missingTarget = parseInstruction('帮我找一下');
     expect(missingTarget.needs_clarification).toBe(true);
@@ -83,20 +120,14 @@ describe('robot instruction understanding and planning', () => {
     });
   });
 
-  it('expands pick-place into parameterized skills', () => {
+  it('rejects pick-place rather than executing a partial grasp', () => {
     const parsed = parseInstruction('把滚柱放到3号格');
     const plan = buildPlan(parsed, 'ins_1');
-    expect(plan?.steps.map((step) => step.skill)).toEqual([
-      'perceive',
-      'select_target',
-      'plan_grasp',
-      'move_to',
-      'grasp',
-      'transport',
-      'place',
-      'verify_placement',
-    ]);
-    expect(validatePlan(plan!)).toEqual([]);
+    expect(plan).toBeNull();
+    const pick = buildPlan(parseInstruction('拿起扳手'), 'ins_pick')!;
+    expect(pick.steps.map((step) => step.skill)).toEqual(['grasp']);
+    expect(pick.steps[0]?.params.target).toMatchObject({ category: 'wrench' });
+    expect(validatePlan(pick)).toEqual([]);
   });
 
   it('detects immediate hold phrases without semantic-model processing', () => {
