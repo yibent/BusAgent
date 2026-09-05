@@ -16,6 +16,11 @@ import { streamQwenChat, type ChatMessage } from './qwen-chat.js';
 import { readInteractionSnapshot } from '../../apps/desktop-robot/interaction-snapshot.js';
 import { isImmediateInterrupt } from '../../apps/desktop-robot/interrupt-monitor-node.js';
 import {
+  rememberPreparation,
+  clearPreparation,
+} from '../../apps/desktop-robot/grasp-preparation-context.js';
+import { onIntentCancellation } from '../../apps/desktop-robot/pending-intents.js';
+import {
   TaskConversation,
   taskFinished,
   progressText,
@@ -27,7 +32,14 @@ export const DIALOGUE_REGISTRATION_KEY = 'DialogueAgent';
 const DEFAULT_SYSTEM_PROMPT =
   '你是 BusAgent 中严谨的工程机械臂操作助手，服务于 SO-101 与 Isaac Sim 工作单元。使用简洁、明确、专业的中文口语回答，不使用 markdown。严格区分指令已收到、计划已生成、正在执行、执行完成、执行失败和结果未知；只依据系统事件陈述事实，在收到 execution.completed 前绝不能声称动作已经完成。信息不足时只询问当前最关键的一项。';
 
-const MAX_TURNS = 12;
+const MAX_TURNS = 32;
+// Suppress incomplete speech prefaces, not operational intent classification.
+export function isSpeechPreface(text: string): boolean {
+  return (
+    /^(?:(?:好|好的|嗯|呃|对|那|那么|现在|接下来)[\s，,。.!！]*)+$/.test(text.trim()) &&
+    /现在|接下来/.test(text)
+  );
+}
 const FAST_INTERACTION_PROMPT = `你现在负责与语义理解并行的快速交互，不等待解析、规划或机械臂完成。
 当前输入只代表收到用户的话，不代表已解析或已执行。
 短期任务记忆中的executing是上一条仍在执行的动作，waiting是等待项，不要把它们移植到新要求上。上一动作未完成时，自然说明先等它完成再处理新要求；尚未收到execution.queued时只能说需要等待，不能声称已排队。严禁用“正在执行底座旋转”等话抢先确认新动作。
@@ -47,6 +59,8 @@ clarification只问事件指定的缺失项，保留必要选项；observation�
 
 function feedbackBoundary(eventType: string): string {
   const boundaries: Record<string, string> = {
+    'execution.completed':
+      '只报告本任务实测完成内容。若result.result.preparation_only=true，只说已到初始准备姿态、尚未抓取；可重新下达抓取进行评估，绝不能说抓取成功或保证下次能抓取。',
     'execution.progress':
       '这是控制器当前阶段的实测反馈。简短说明正在做什么；attempt是本次任务尝试次数，退让、重新定位、侧向观察均非抓取成功。只有恢复事件才可说正在重试；持物不确定时说明保持夹爪，不建议松爪。不要暴露内部节点，不重复历史阶段。',
     'execution.started':
@@ -60,7 +74,7 @@ function feedbackBoundary(eventType: string): string {
     'execution.unknown':
       '是否开始执行、是否完成均未获得确认。必须明确无法确认是否执行，绝不能说已执行、执行中、已到位。',
     'execution.failed':
-      '本次动作未完成。用当前任务的部件名称说明原因，shoulder_pan是底座，不是肩臂。仅当事实result.result.retry_available=true或message明确等待对话确认重试时，可简短询问是否重新观察后再试一次；等待用户明确下达重试，不声称已经重试。否则不建议重试，尤其持物不确定时保持夹爪。',
+      '本次动作未完成。用当前任务的部件名称说明原因，shoulder_pan是底座，不是肩臂。若事实result.result.preparation.requires_confirmation=true，须说明当前无法抓取、建议先回初始准备姿态并保持夹爪开度，再询问是否同意；这是已检查的准备路径，不保证能抓取，未获同意不得说已开始移动。可用两句简短表达，不能为简短漏掉确认问题。无preparation不得编造回位建议。仅当result.result.retry_available=true时可询问是否重新观察后再试一次；否则不建议自动重试，尤其持物不确定时保持夹爪。',
     'observation.ready':
       '只有本次感知结果，未因此发出机械臂移动或抓取。不能说正在靠近或开始移动。',
     'task.progress':
@@ -139,6 +153,7 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
   private readonly latestInput = new Map<string, string>();
   private readonly quietUntil = new Map<string, number>();
   private unsubscribeInterruptions: (() => void) | undefined;
+  private unsubscribeCancellation: (() => void) | undefined;
 
   constructor(
     private readonly hostConfig: HostConfig,
@@ -154,11 +169,18 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
     this.unsubscribeInterruptions ??= this.interruptions.subscribe((conversationId) => {
       this.interrupt(conversationId);
     });
+    this.unsubscribeCancellation ??= onIntentCancellation((conversationId) => {
+      for (const id of this.tasks.silenceOpen(conversationId)) this.clearWatch(id);
+      clearPreparation(conversationId);
+      this.interrupt(conversationId);
+    });
   }
 
   onModuleDestroy(): void {
     this.unsubscribeInterruptions?.();
     this.unsubscribeInterruptions = undefined;
+    this.unsubscribeCancellation?.();
+    this.unsubscribeCancellation = undefined;
     for (const controller of this.abort.values()) controller.abort();
     for (const id of this.watches.keys()) this.clearWatch(id);
   }
@@ -175,6 +197,13 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
   async handle(context: InProcessEventContext): Promise<void> {
     const parallel = context.agentConfig.config.parallel_interaction === true;
     const task = parallel ? this.tasks.observe(context) : undefined;
+    if (
+      parallel &&
+      context.event.taskId &&
+      context.event.eventType.startsWith('execution.') &&
+      !task
+    )
+      return;
     if (task && taskFinished(task)) this.clearWatch(task.id);
     if (context.event.eventType === 'interaction.classified') {
       if (task) await this.resolveInteraction(context, task);
@@ -203,6 +232,10 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
         return;
       if (task) {
         task.feedback = fixed;
+        if (!this.tasks.canReport(task.id)) {
+          this.clearWatch(task.id);
+          return;
+        }
         if (context.event.eventType === 'execution.queued') {
           task.progressSpoken = true;
           this.clearWatch(task.id);
@@ -240,6 +273,7 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
         context.event.correlationId,
         `task_${context.event.eventId}`,
       );
+      if (isSpeechPreface(payloadText(context.event.payload))) return;
       if (task && !taskFinished(task)) this.watch(context, task);
       // Release the conversation delivery lane; task feedback can preempt a slow reply.
       void this.startReply(context).catch((error) => this.logger.error(String(error)));
@@ -261,7 +295,13 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
   private watch(context: InProcessEventContext, task: ConversationTask): void {
     if (this.watches.has(task.id)) return;
     const report = (text: string, eventType: string) => {
-      if (taskFinished(task)) return;
+      if (
+        taskFinished(task) ||
+        !this.tasks.canReport(task.id) ||
+        this.latestInput.get(task.conversationId) !== task.id ||
+        Date.now() < (this.quietUntil.get(task.conversationId) ?? 0)
+      )
+        return;
       task.feedback = text;
       const progressContext = {
         ...context,
@@ -351,6 +391,11 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
       return;
     }
     const conversationId = context.event.correlationId;
+    const canReport = () =>
+      context.agentConfig.config.parallel_interaction !== true ||
+      !context.event.taskId ||
+      this.tasks.canReport(context.event.taskId);
+    if (!canReport()) return;
     this.abort.get(conversationId)?.abort();
     if (context.event.eventType === 'intent.created')
       this.hub.publish(conversationId, { type: 'speech.interrupted' });
@@ -375,6 +420,11 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
       this.hostConfig.dashscopeApiKey !== undefined,
   ): Promise<void> {
     const conversationId = context.event.correlationId;
+    const canReport = () =>
+      context.agentConfig.config.parallel_interaction !== true ||
+      !context.event.taskId ||
+      this.tasks.canReport(context.event.taskId);
+    if (!canReport()) return;
     this.abort.get(conversationId)?.abort();
     if (context.agentConfig.config.parallel_interaction === true)
       this.hub.publish(conversationId, { type: 'speech.interrupted' });
@@ -413,10 +463,14 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
                   current_event: context.event.eventType,
                   facts: context.event.payload,
                   task_id: context.event.taskId,
-                  tasks: this.tasks.snapshot(conversationId),
+                  task_context: this.tasks
+                    .snapshot(conversationId)
+                    .filter(
+                      (item) =>
+                        (item as { task_id: string }).task_id === context.event.taskId,
+                    ),
                 }),
             },
-            ...(this.histories.get(conversationId) ?? []).slice(-MAX_TURNS * 2),
             {
               role: 'user',
               content:
@@ -425,7 +479,7 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
             },
           ],
         })) {
-          if (this.generation.get(conversationId) !== gen) return;
+          if (this.generation.get(conversationId) !== gen || !canReport()) return;
           full += delta;
           this.hub.publish(conversationId, {
             type: 'reply.delta',
@@ -447,12 +501,14 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
       this.hub.publish(conversationId, { type: 'reply.delta', text, turn: gen });
       this.tts.append(conversationId, gen, text);
     }
-    if (this.generation.get(conversationId) !== gen) return;
+    if (this.generation.get(conversationId) !== gen || !canReport()) return;
     this.abort.delete(conversationId);
     const history = this.histories.get(conversationId) ?? [];
     history.push({ role: 'assistant', content: text });
     this.histories.set(conversationId, history.slice(-MAX_TURNS * 2));
     this.hub.publish(conversationId, { type: 'reply.final', text, turn: gen });
+    if (context.event.eventType === 'execution.failed')
+      rememberPreparation(conversationId, context.event.payload, text);
     // Persist feedback independently of TTS readiness; audio failure must not erase it.
     await context.publish({
       event_type: 'reply.created',

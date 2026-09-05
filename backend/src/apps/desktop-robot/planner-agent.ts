@@ -71,7 +71,8 @@ export function buildPlan(
     case 'pick':
       if (
         instruction.needs_clarification ||
-        (!instruction.target.category && !instruction.retry_last_grasp)
+        (!instruction.target.category && !instruction.retry_last_grasp && !instruction.prepare_last_grasp) ||
+        (instruction.prepare_last_grasp && !instruction.grasp_preparation_id)
       )
         return null;
       steps = [
@@ -82,8 +83,9 @@ export function buildPlan(
           params: {
             target: instruction.target,
             ...(instruction.retry_last_grasp ? { retry_last: true } : {}),
+            ...(instruction.prepare_last_grasp ? { prepare_last: true, proposal_id: instruction.grasp_preparation_id } : {}),
           },
-          verify: 'visual lift verification',
+          verify: instruction.prepare_last_grasp ? 'initial preparation reached; no grasp' : 'visual lift verification',
         },
       ];
       break;

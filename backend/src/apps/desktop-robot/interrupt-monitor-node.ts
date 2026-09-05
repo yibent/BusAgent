@@ -16,7 +16,7 @@ function textPayload(payload: unknown): string {
 }
 
 export function isImmediateInterrupt(text: string): boolean {
-  return /停一下|停下来|停下|停止|中断|等一下|先别动|别动|保持|暂停|中止|取消|^停[，。！？,.!?]?$/.test(
+  return /停一下|停下来|停下|停止|中断|等一下|先别动|别动|保持|暂停|中止|取消|不(?:再)?(?:抓取|抓|移动|执行)了|^停[，。！？,.!?]?$/.test(
     text.trim(),
   );
 }

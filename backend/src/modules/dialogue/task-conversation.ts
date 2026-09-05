@@ -29,6 +29,11 @@ export interface ConversationTask {
   queuePosition?: number;
   graspProgress?: unknown;
   updatedAt: number;
+  version?: number;
+  muted?: boolean;
+  startedOrder?: number;
+  commandId?: string;
+  requestOrder?: number;
 }
 const ranks: Record<TaskStage, number> = {
   understanding: 0,
@@ -56,6 +61,30 @@ function record(value: unknown): Record<string, unknown> {
 /** Read-only conversational memory, never a command router or execution authority. */
 export class TaskConversation {
   private readonly tasks = new Map<string, ConversationTask>();
+  private startedOrder = 0;
+  private requestOrder = 0;
+
+  silenceOpen(conversation: string): string[] {
+    const ids: string[] = [];
+    for (const task of this.tasks.values()) {
+      if (task.conversationId === conversation && !taskFinished(task)) {
+        task.muted = true;
+        ids.push(task.id);
+      }
+    }
+    return ids;
+  }
+
+  canReport(id: string): boolean {
+    const task = this.tasks.get(id);
+    if (!task || task.muted) return false;
+    return ![...this.tasks.values()].some(
+      (other) =>
+        other.conversationId === task.conversationId &&
+        other.startedOrder !== undefined &&
+        (other.requestOrder ?? 0) > (task.requestOrder ?? 0),
+    );
+  }
 
   observe(context: InProcessEventContext): ConversationTask | undefined {
     const event = context.event;
@@ -75,8 +104,22 @@ export class TaskConversation {
       source: '',
       stage: 'understanding' as TaskStage,
       updatedAt: Date.now(),
+      requestOrder: ++this.requestOrder,
     };
     if (task.conversationId !== event.correlationId) return undefined;
+    const version = event.taskVersion ?? 1;
+    if (version < (task.version ?? 1)) return undefined;
+    if (event.eventType.startsWith('execution.')) {
+      if (taskFinished(task) && task.stage !== 'unknown') return undefined;
+      if (
+        task.commandId &&
+        typeof payload.command_id === 'string' &&
+        task.commandId !== payload.command_id
+      )
+        return undefined;
+      if (typeof payload.command_id === 'string') task.commandId = payload.command_id;
+    }
+    task.version = version;
     const instruction = record(
       event.eventType === 'instruction.parsed' ? payload : payload.instruction,
     );
@@ -119,6 +162,7 @@ export class TaskConversation {
       case 'execution.started':
       case 'execution.progress':
         stage = 'executing';
+        task.startedOrder ??= ++this.startedOrder;
         if (payload.grasp) task.graspProgress = payload.grasp;
         break;
       case 'clarification.requested':
@@ -141,12 +185,16 @@ export class TaskConversation {
         break;
     }
     // Fan-out deliveries may arrive out of order; a late parse cannot revive a result.
-    if (stage && ranks[stage] >= ranks[task.stage] && !taskFinished(task))
+    if (
+      stage &&
+      ranks[stage] >= ranks[task.stage] &&
+      (!taskFinished(task) || task.stage === 'unknown')
+    )
       task.stage = stage;
     task.updatedAt = Date.now();
     this.tasks.set(id, task);
     for (const [key, entry] of this.tasks)
-      if (Date.now() - entry.updatedAt > 30 * 60_000) this.tasks.delete(key);
+      if (Date.now() - entry.updatedAt > 120 * 60_000) this.tasks.delete(key);
     while (this.tasks.size > 500) this.tasks.delete(this.tasks.keys().next().value!);
     return task;
   }
@@ -158,13 +206,14 @@ export class TaskConversation {
     // Keep running/waiting tasks even after many status questions or chat turns.
     return [
       ...new Set([
-        ...conversation.filter((t) => !taskFinished(t)),
-        ...conversation.slice(-6),
+        ...conversation.filter((t) => !taskFinished(t) && !t.muted),
+        ...conversation.slice(-24),
       ]),
     ].map((t) => ({
       task_id: t.id,
       user_request: t.source,
       stage: t.stage,
+      feedback_suppressed: t.muted === true,
       action: actionName(t.instruction),
       feedback: t.feedback,
       grasp_progress: t.graspProgress,
@@ -201,11 +250,14 @@ export class TaskConversation {
         : null,
       executing: tasks
         .filter(
-          (t) => t.id !== currentTaskId && ['executing', 'submitted'].includes(t.stage),
+          (t) =>
+            t.id !== currentTaskId &&
+            !t.muted &&
+            ['executing', 'submitted'].includes(t.stage),
         )
         .map(compact),
       waiting: tasks
-        .filter((t) => t.id !== currentTaskId && t.stage === 'queued')
+        .filter((t) => t.id !== currentTaskId && !t.muted && t.stage === 'queued')
         .map(compact),
       recently_finished: tasks.filter(taskFinished).slice(-3).map(compact),
       rule: '新请求尚未开始；先记住当前正在执行的动作，再承接新要求。真实排队只以execution.queued为证据，真实开始只以execution.started为证据。',
@@ -240,6 +292,7 @@ export function targetName(instruction?: ParsedInstruction): string {
 }
 
 export function actionName(instruction?: ParsedInstruction): string {
+  if (instruction?.prepare_last_grasp) return '确认后回到初始准备姿态（不抓取）';
   if (instruction?.retry_last_grasp) return '重新观察并重试上次抓取';
   if (instruction?.intent === 'pick') return `抓取${targetName(instruction)}`;
   if (instruction?.object_goal) {
@@ -284,6 +337,12 @@ export function progressText(task: ConversationTask): string {
   if (task.stage === 'planning') return '正在准备动作，还未收到开始反馈。';
   if (task.stage === 'queued') return '动作仍在等待队列，尚未下发控制器。';
   if (task.stage === 'submitted') return '动作已提交，等待控制器开始。';
+  if (
+    task.stage === 'executing' &&
+    (task.instruction?.prepare_last_grasp ||
+      record(task.graspProgress).preparation_only === true)
+  )
+    return '正在回到初始准备姿态，尚未确认到位；没有执行抓取。';
   if (task.stage === 'executing')
     return task.instruction?.intent === 'pick'
       ? '抓取仍在进行，尚未确认夹持与抬升成功。'

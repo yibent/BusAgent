@@ -7,6 +7,7 @@ import {
 } from '../../adapters/in-process/agent-classes.js';
 import type { RobotPlan, SkillStep } from './instruction-types.js';
 import { summarizeCapabilities } from './interaction-snapshot.js';
+import { rememberOutcome } from './control-history.js';
 
 export const ROBOT_ADAPTER_REGISTRATION_KEY = 'RobotAdapterNode';
 
@@ -65,7 +66,9 @@ function completionMessage(plan: RobotPlan, results: ControlResult[]): string {
     case 'cancel':
       return '已停止机械臂跟随。';
     case 'pick':
-      return `已完成${target}抓取。`;
+      return plan.intent.prepare_last_grasp
+        ? (results.at(-1)?.message ?? '初始准备移动结果未确认。')
+        : `已完成${target}抓取。`;
     case 'pick_place':
       return `已完成${target}抓取与放置。`;
     case 'chat':
@@ -331,6 +334,7 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
           step_id: step.id,
           skill: step.skill,
           message: result.message,
+          result: result.data,
         });
         this.logger.warn(`skill ${step.skill} failed: ${result.message}`);
         return 'failed';
@@ -454,6 +458,13 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
     eventType: string,
     payload: Record<string, unknown>,
   ): Promise<void> {
+    rememberOutcome(
+      context.event.correlationId,
+      context.event.taskId ?? context.event.eventId,
+      eventType,
+      payload,
+      readPlan(context.event.payload)?.intent,
+    );
     await context.publish({
       event_type: eventType,
       correlation_id: context.event.correlationId,

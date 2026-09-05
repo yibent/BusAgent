@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DialogueAgent } from '../src/modules/dialogue/dialogue-agent.js';
-import { TaskConversation } from '../src/modules/dialogue/task-conversation.js';
+import {
+  TaskConversation,
+  progressText,
+} from '../src/modules/dialogue/task-conversation.js';
+import { cancelPendingIntent } from '../src/apps/desktop-robot/pending-intents.js';
 import { ConversationHub } from '../src/modules/conversation/conversation-hub.js';
 import { ConversationInterruptions } from '../src/modules/conversation/conversation-interruptions.js';
 import { HostConfig } from '../src/config/host-config.js';
@@ -91,6 +95,96 @@ afterEach(() => {
 });
 
 describe('coherent model-generated task feedback', () => {
+  it('does not acknowledge an incomplete speech preface as execution', async () => {
+    vi.useFakeTimers();
+    const t = setup();
+    await t.agent.handle(t.context('intent.created', { text: '好，现在。' }));
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(t.requests).toHaveLength(0);
+    expect(t.tts.append).not.toHaveBeenCalled();
+  });
+
+  it('silences cancelled task timers and late events while a later home completes', async () => {
+    vi.useFakeTimers();
+    const t = setup();
+    t.agent.onModuleInit();
+    await t.agent.handle(t.context('intent.created', { text: '抓红色方块' }));
+    await t.agent.handle(t.context('execution.started', { message: '抓取开始' }));
+    await vi.advanceTimersByTimeAsync(0);
+    cancelPendingIntent('feedback-conv');
+    await t.agent.handle(t.context('intent.created', { text: '复位' }, 'task_home'));
+    await t.agent.handle(
+      t.context('execution.completed', { message: '复位已完成' }, 'task_home'),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    const count = t.requests.length;
+    await t.agent.handle(t.context('execution.progress', { message: '抓取仍在进行' }));
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(t.requests).toHaveLength(count);
+  });
+
+  it('does not let an old timeout or late start overtake a newer physical action', async () => {
+    vi.useFakeTimers();
+    const t = setup();
+    await t.agent.handle(t.context('intent.created', { text: '抓方块' }));
+    await vi.advanceTimersByTimeAsync(0);
+    await t.agent.handle(t.context('intent.created', { text: '复位' }, 'task_home'));
+    await t.agent.handle(
+      t.context('execution.started', { message: '开始复位' }, 'task_home'),
+    );
+    await t.agent.handle(
+      t.context('execution.completed', { message: '复位完成' }, 'task_home'),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    const count = t.requests.length;
+    await t.agent.handle(t.context('execution.started', { message: '晚到的抓取开始' }));
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(t.requests).toHaveLength(count);
+  });
+
+  it('never revives a terminal task; unknown can resolve with measured completion', () => {
+    const t = setup();
+    const memory = new TaskConversation();
+    memory.observe(t.context('execution.completed', { command_id: 'cmd' }));
+    expect(
+      memory.observe(t.context('execution.progress', { command_id: 'cmd' })),
+    ).toBeUndefined();
+    expect(
+      memory.observe(t.context('execution.completed', { command_id: 'cmd' })),
+    ).toBeUndefined();
+    memory.observe(t.context('execution.unknown', {}, 'task_unknown'));
+    expect(
+      memory.observe(t.context('execution.completed', {}, 'task_unknown'))?.stage,
+    ).toBe('completed');
+  });
+
+  it('describes preparation as preparation, and keeps old proposals out of new feedback', async () => {
+    const t = setup();
+    const memory = new TaskConversation();
+    const task = memory.observe(
+      t.context('instruction.parsed', {
+        ...parseInstruction('抓红色方块'),
+        prepare_last_grasp: true,
+      }),
+    )!;
+    memory.observe(t.context('execution.started', {}));
+    expect(progressText(task)).toContain('初始准备姿态');
+    expect(progressText(task)).not.toContain('抓取仍在进行');
+    await t.agent.handle(
+      t.context('execution.failed', {
+        message: '旧建议',
+        result: { result: { preparation: { id: 'old', requires_confirmation: true } } },
+      }),
+    );
+    await vi.waitFor(() => expect(t.requests).toHaveLength(1));
+    await t.agent.handle(
+      t.context('execution.failed', { message: '上下文失效' }, 'task_new'),
+    );
+    await vi.waitFor(() => expect(t.requests).toHaveLength(2));
+    expect(JSON.stringify(t.requests.at(-1))).not.toContain('旧建议');
+    expect(t.requests.at(-1)?.messages).toHaveLength(2);
+  });
+
   it('gives the LLM actual task facts and remembers them for subsequent questions', async () => {
     const t = setup();
     await t.agent.handle(t.context('intent.created', { text: '机械臂复位' }));

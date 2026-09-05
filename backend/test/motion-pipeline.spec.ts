@@ -96,7 +96,7 @@ describe('motion language and execution truth', () => {
     expect(parseInstruction('机械臂跳个舞').intent).toBe('unsupported');
   });
   it('routes the web pause button and voice pause through the same interrupt vocabulary', async () => {
-    for (const text of ['停一下', '等一下', '停', '暂停', '停止'])
+    for (const text of ['停一下', '等一下', '停', '暂停', '停止', '不抓取了'])
       expect(parseInstruction(text).intent).toBe('cancel');
     const events: PublishedEvent[] = [];
     const node = new InstructionUnderstandingNode();
@@ -105,7 +105,11 @@ describe('motion language and execution truth', () => {
     const spoken = context('停一下', events, 'voice-pause');
     spoken.event.payload = { text: '停一下', source: 'stt' };
     await node.handle(spoken);
-    expect(events).toHaveLength(1); // Voice fast path already owns this interrupt.
+    expect(events.filter((e) => e.event_type === 'instruction.parsed')).toHaveLength(1);
+    expect(events.at(-1)).toMatchObject({
+      event_type: 'interaction.classified',
+      payload: { intent: 'cancel' },
+    });
   });
   it('does not complete an accepted command until measured result, and frees delivery for stop', async () => {
     vi.useFakeTimers();

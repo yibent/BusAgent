@@ -16,6 +16,13 @@ import type {
 } from './instruction-types.js';
 import { motionLanguage, isMotionSupplement } from './motion-language.js';
 import { isImmediateInterrupt } from './interrupt-monitor-node.js';
+import { preparationContext, clearPreparation } from './grasp-preparation-context.js';
+import { readInteractionSnapshot } from './interaction-snapshot.js';
+import {
+  MEMORY_TTL_MS,
+  INSTRUCTION_MEMORY_LIMIT,
+  recentOutcomes,
+} from './control-history.js';
 
 export const INSTRUCTION_UNDERSTANDING_REGISTRATION_KEY =
   'InstructionUnderstandingNode';
@@ -202,8 +209,10 @@ export class InstructionUnderstandingNode implements InProcessAgent, OnModuleIni
 
   async handle(context: InProcessEventContext): Promise<void> {
     if (context.event.eventType !== 'intent.created') return;
-    if (isImmediateInterrupt(textPayload(context.event.payload)))
+    if (isImmediateInterrupt(textPayload(context.event.payload))) {
       cancelPendingIntent(context.event.correlationId);
+      clearPreparation(context.event.correlationId);
+    }
     const version = intentVersion(context.event.correlationId);
     if (
       this.host?.dashscopeApiKey &&
@@ -236,21 +245,36 @@ export class InstructionUnderstandingNode implements InProcessAgent, OnModuleIni
       parsed = parseInstruction(previous.text + '，' + text);
     }
     this.pending.delete(context.event.correlationId);
-    if (this.host?.dashscopeApiKey && (parsed.intent !== 'cancel' ||
-        (context.event.payload as { source?: string }).source === 'stt')) {
+    let liveState: Record<string, unknown> = {};
+    if (
+      this.host?.dashscopeApiKey &&
+      (parsed.intent !== 'cancel' ||
+        (context.event.payload as { source?: string }).source === 'stt')
+    ) {
       // Voice stop has already used the immediate lane. Still interpret the
       // complete utterance, e.g. "stop, then move above the red block".
       const remembered = this.history.get(context.event.correlationId);
       try {
+        liveState = await readInteractionSnapshot(
+          context.agentConfig.config,
+          AbortSignal.timeout(500),
+        );
         parsed = await understandSemantic(
           this.host,
           text,
-          remembered && Date.now() - remembered.at < 120_000 ? remembered.entries : [],
+          remembered && Date.now() - remembered.at < MEMORY_TTL_MS
+            ? remembered.entries
+            : [],
           undefined,
           typeof context.agentConfig.config.model === 'string'
             ? context.agentConfig.config.model
             : this.host.qwenChatModel,
           context.agentConfig.config.reasoning === 'none' ? 'none' : 'low',
+          preparationContext(context.event.correlationId),
+          {
+            live_state: liveState,
+            task_outcomes: recentOutcomes(context.event.correlationId),
+          },
         );
       } catch (error) {
         this.logger.warn(
@@ -267,18 +291,55 @@ export class InstructionUnderstandingNode implements InProcessAgent, OnModuleIni
       }
     }
     if (version !== intentVersion(context.event.correlationId)) return;
+    if (
+      parsed.retry_last_grasp &&
+      (liveState.grasp_status as { retry_available?: boolean } | undefined)
+        ?.retry_available !== true
+    ) {
+      parsed.needs_clarification = true;
+      parsed.clarification_question =
+        '当前没有可恢复的抓取。是否重新发起一次新的抓取？';
+    }
+    if (parsed.prepare_last_grasp) {
+      const proposal = preparationContext(context.event.correlationId);
+      if (proposal) parsed.grasp_preparation_id = proposal.id;
+      else {
+        parsed.needs_clarification = true;
+        parsed.clarification_question =
+          '目前没有待确认的初始准备建议，未执行移动。请重新评估抓取。';
+      }
+    }
+    if (!['chat', 'capabilities', 'status_query'].includes(parsed.intent))
+      clearPreparation(context.event.correlationId);
     const remembered = this.history.get(context.event.correlationId);
     this.history.set(context.event.correlationId, {
       at: Date.now(),
-      entries: [...(remembered?.entries ?? []), parsed].slice(-6),
+      entries: [
+        ...(remembered && Date.now() - remembered.at < MEMORY_TTL_MS
+          ? remembered.entries
+          : []),
+        parsed,
+      ].slice(-INSTRUCTION_MEMORY_LIMIT),
     });
     for (const [id, memory] of this.history)
-      if (Date.now() - memory.at > 120_000) this.history.delete(id);
+      if (Date.now() - memory.at > MEMORY_TTL_MS) this.history.delete(id);
+    while (this.history.size > 500)
+      this.history.delete(this.history.keys().next().value!);
     if (
       parsed.intent === 'cancel' &&
+      isImmediateInterrupt(text) &&
       (context.event.payload as { source?: string }).source === 'stt'
-    )
+    ) {
+      await context.publish({
+        event_type: 'interaction.classified',
+        correlation_id: context.event.correlationId,
+        causation_id: context.event.eventId,
+        payload: { instruction_id: context.event.eventId, intent: 'cancel' },
+      });
       return;
+    }
+    if (parsed.intent === 'cancel' && !isImmediateInterrupt(text))
+      cancelPendingIntent(context.event.correlationId);
     if (parsed.needs_clarification && parsed.motion) {
       this.pending.set(context.event.correlationId, {
         text: parsed.source_text,

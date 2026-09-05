@@ -88,6 +88,35 @@ function setup(text: string) {
 }
 afterEach(() => vi.unstubAllGlobals());
 describe('parallel interaction lane', () => {
+  it.each([true, false])(
+    'allows restore only when the current controller confirms retry availability=%s',
+    async (available) => {
+      const test = setup('重试刚才的抓取');
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((url: string) =>
+          Promise.resolve(
+            url.endsWith('/api/status')
+              ? Response.json({
+                  ...snapshot,
+                  grasp: {
+                    retry_available: available,
+                    result: { retry_available: true },
+                  },
+                })
+              : sse(JSON.stringify({ intent: 'pick', retry_last_grasp: true })),
+          ),
+        ),
+      );
+      await test.nlu.handle(test.nluCtx);
+      await vi.waitFor(() => expect(test.events).toHaveLength(1));
+      expect(test.events[0]).toMatchObject({
+        event_type: 'instruction.parsed',
+        payload: { needs_clarification: !available },
+      });
+      test.dialogue.onModuleDestroy();
+    },
+  );
   it('distinguishes current hold from a previously completed home command', () => {
     expect(
       summarizeMotion({
