@@ -30,7 +30,7 @@ function context(
   });
   return {
     event: makeEvent({
-      eventType: 'intent.created',
+      eventType: 'conversation.requested',
       correlationId: conversationId,
       payload: { text: '你好' },
     }),
@@ -94,35 +94,38 @@ describe('DialogueAgent', () => {
     ]);
   });
 
-  it('skips non-intent events', async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
-    const hub = new ConversationHub();
-    const agent = new DialogueAgent(
-      HostConfig.fromEnv({ DASHSCOPE_API_KEY: 'test-key' }),
-      hub,
-      {
-        startTurn: vi.fn(),
-        append: vi.fn(),
-        finishTurn: vi.fn(() => Promise.resolve()),
-        cancel: vi.fn(),
-        interrupt: vi.fn(),
-      } as unknown as TtsAgent,
-      new ConversationInterruptions(hub),
-    );
-    await agent.handle({
-      event: makeEvent({ eventType: 'transcript.delta', payload: { text: 'x' } }),
-      agentConfig: {
-        appId: 'app',
-        agentId: 'robot.dialogue',
-        config: {},
-        adapter: 'in-process',
-        registrationKey: agent.registrationKey,
-      },
-      publish: () => Promise.resolve(),
-    });
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
+  it.each(['transcript.delta', 'intent.created'])(
+    'does not turn %s into unverified action claims',
+    async (eventType) => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      const hub = new ConversationHub();
+      const agent = new DialogueAgent(
+        HostConfig.fromEnv({ DASHSCOPE_API_KEY: 'test-key' }),
+        hub,
+        {
+          startTurn: vi.fn(),
+          append: vi.fn(),
+          finishTurn: vi.fn(() => Promise.resolve()),
+          cancel: vi.fn(),
+          interrupt: vi.fn(),
+        } as unknown as TtsAgent,
+        new ConversationInterruptions(hub),
+      );
+      await agent.handle({
+        event: makeEvent({ eventType, payload: { text: '绕Z轴旋转90度' } }),
+        agentConfig: {
+          appId: 'app',
+          agentId: 'robot.dialogue',
+          config: {},
+          adapter: 'in-process',
+          registrationKey: agent.registrationKey,
+        },
+        publish: () => Promise.resolve(),
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
 
   it('cancels TTS when a human interruption is reported', () => {
     const hub = new ConversationHub();

@@ -16,7 +16,7 @@ function textPayload(payload: unknown): string {
 }
 
 export function isImmediateInterrupt(text: string): boolean {
-  return /停一下|停下来|停下|等一下|先别动|别动|暂停|中止|取消|^停[，。！？,.!?]?$/.test(
+  return /停一下|停下来|停下|停止|中断|等一下|先别动|别动|保持|暂停|中止|取消|^停[，。！？,.!?]?$/.test(
     text.trim(),
   );
 }
@@ -38,14 +38,17 @@ export class InterruptMonitorNode implements InProcessAgent, OnModuleInit {
     if (!['transcript.delta', 'transcript.final'].includes(context.event.eventType))
       return;
     const text = textPayload(context.event.payload);
-    if (!isImmediateInterrupt(text)) return;
+    if (!isImmediateInterrupt(text)) {
+      this.lastText.delete(context.event.correlationId);
+      return;
+    }
     if (this.lastText.get(context.event.correlationId) === text) return;
     this.lastText.set(context.event.correlationId, text);
     await context.publish({
       event_type: 'interrupt.requested',
       correlation_id: context.event.correlationId,
       causation_id: context.event.eventId,
-      task_id: `task_${context.event.correlationId}`,
+      task_id: `task_interrupt_${context.event.eventId}`,
       task_version: 1,
       priority: 0,
       payload: {

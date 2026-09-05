@@ -15,6 +15,31 @@ export interface SkillDefinition {
  * these task-level contracts remain stable.
  */
 export const SKILL_CATALOG: Readonly<Record<string, SkillDefinition>> = {
+  ...Object.fromEntries(
+    Object.entries({
+      home: [],
+      move_joint: ['joint', 'degrees'],
+      move_cartesian: ['xyz_m'],
+      rotate: ['axis', 'degrees'],
+      gripper: ['opening'],
+      set_speed: ['degrees_per_second'],
+      resume: [],
+      capabilities: [],
+    }).map(([name, requiredParams]) => [
+      name,
+      {
+        name,
+        requiredParams,
+        preconditions: [],
+        postconditions: [],
+        lane: name === 'capabilities' ? null : 'arm-01',
+        interruptibility: 'immediate' as const,
+        failureTypes: ['NO_IK', 'JOINT_LIMIT', 'TIMEOUT', 'BUSY'],
+        maxRetries: 0,
+        loopProfile: 'joint_motion_loop',
+      },
+    ]),
+  ),
   perceive: {
     name: 'perceive',
     requiredParams: [],
@@ -106,7 +131,7 @@ export const SKILL_CATALOG: Readonly<Record<string, SkillDefinition>> = {
   follow: {
     name: 'follow',
     requiredParams: ['enabled'],
-    preconditions: ['target.requested'],
+    preconditions: [],
     postconditions: ['robot.following'],
     lane: 'arm-01',
     interruptibility: 'immediate',

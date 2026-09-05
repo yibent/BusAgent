@@ -536,8 +536,12 @@ export function useConversation() {
   }, [ensureSocket, releaseCapture]);
 
   useEffect(() => {
-    void ensureSocket().catch(() => setActivity("error"));
+    let active = true;
+    void ensureSocket().catch(() => {
+      if (active) setActivity("error");
+    });
     return () => {
+      active = false;
       releaseCapture();
       playerRef.current?.stop();
       const socket = socketRef.current;

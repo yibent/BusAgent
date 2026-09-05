@@ -21,7 +21,16 @@ import {
 import { useConversation, type RobotBusEvent } from "../hooks/useConversation";
 import { useRobotStatus } from "../hooks/useRobotStatus";
 
-const quickCommands = ["找红色方块", "跟踪电钻", "现在什么状态"];
+const quickCommands = [
+  "查询能力",
+  "底座顺时针转10度",
+  "向上移动1厘米",
+  "打开夹爪",
+  "闭合夹爪",
+  "归位",
+  "继续执行",
+  "现在什么状态",
+];
 
 const activityText = {
   idle: "Web 通道已连接",
@@ -418,13 +427,66 @@ export function RobotConsolePage() {
                 <span>
                   <small>机械臂</small>
                   <strong>
-                    {robot.status?.follow_enabled ? "跟随中" : "保持"}
+                    {robot.status?.motion?.mode === "moving"
+                      ? "运动中"
+                      : robot.status?.follow_enabled
+                        ? "跟随中"
+                        : "保持"}
                   </strong>
                 </span>
               </div>
             </div>
 
             {robot.error && <p className="controller-error">{robot.error}</p>}
+            {robot.status?.motion && (
+              <div className="motion-feedback">
+                <p>实测关节角度（度）</p>
+                <dl className="joint-readings">
+                  {Object.entries(
+                    robot.status.motion.joint_positions_deg ?? {},
+                  ).map(([name, angle]) => (
+                    <div key={name}>
+                      <dt>
+                        {(
+                          {
+                            shoulder_pan: "底座",
+                            shoulder_lift: "肩部",
+                            elbow_flex: "肘部",
+                            wrist_flex: "腕俯仰",
+                            wrist_roll: "腕旋转",
+                            gripper: "夹爪",
+                          } as Record<string, string>
+                        )[name] ?? name}
+                      </dt>
+                      <dd>{angle.toFixed(1)}°</dd>
+                    </div>
+                  ))}
+                </dl>
+                <p>
+                  末端世界坐标（米）：
+                  {robot.status.motion.tool_position_world_m
+                    ?.map((v) => v.toFixed(3))
+                    .join(" / ") ?? "等待采样"}
+                </p>
+                <p>
+                  最近动作：
+                  {robot.status.motion.last_command?.message ?? "尚未下达"} ·{" "}
+                  {(
+                    {
+                      accepted: "已接收",
+                      started: "执行中",
+                      completed: "已完成",
+                      failed: "失败",
+                      cancelled: "已中断",
+                    } as Record<string, string>
+                  )[robot.status.motion.last_command?.state ?? ""] ?? "待命"}
+                </p>
+                <details>
+                  <summary>当前控制器能力</summary>
+                  <p>{robot.status.capabilities?.message ?? "等待能力信息"}</p>
+                </details>
+              </div>
+            )}
           </section>
 
           <section className="console-card pipeline-card">

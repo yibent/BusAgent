@@ -39,6 +39,8 @@ function factualReply(eventType: string, payload: unknown): string | null {
   if (eventType === 'execution.completed') {
     return message || '任务已经完成。';
   }
+  if (eventType === 'execution.started')
+    return '控制器已开始执行动作，正在等待到位反馈。';
   if (eventType === 'execution.failed') {
     return message ? `任务没有完成：${message}` : '任务没有完成，请检查控制端状态。';
   }
@@ -60,8 +62,8 @@ function isAbortError(error: unknown): boolean {
 }
 
 /**
- * Text dialogue agent. On a finished user utterance (`intent.created`) it
- * streams a Qwen reply to the live session and publishes `reply.created`.
+ * Handles ordinary conversation only after instruction routing. Motion replies
+ * come exclusively from factual execution/clarification events.
  */
 @Injectable()
 export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDestroy {
@@ -108,7 +110,7 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
       return;
     }
     const text = payloadText(context.event.payload);
-    if (context.event.eventType !== 'intent.created') {
+    if (context.event.eventType !== 'conversation.requested') {
       this.logger.debug(`skip ${context.event.eventType} id=${context.event.eventId}`);
       return;
     }
@@ -175,7 +177,12 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
     this.histories.set(conversationId, history);
     const system = await this.systemPrompt(context.agentConfig.config);
     const messages: ChatMessage[] = [
-      { role: 'system', content: system },
+      {
+        role: 'system',
+        content:
+          system +
+          '\n你在普通交流分支，没有执行工具或任何动作事件。不能承诺执行、报告进度或列举未核验能力。操作请求应提示用户给出具体指令；能力问题应提示用户说“查询能力”。抓取和放置尚未实现。',
+      },
       ...history.slice(-MAX_TURNS * 2),
     ];
 
@@ -183,6 +190,7 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
     this.hub.publish(conversationId, { type: 'reply.start', turn: gen });
     this.tts.startTurn(conversationId, gen);
     let full = '';
+    const chunks: string[] = [];
     try {
       for await (const delta of streamQwenChat({
         apiKey,
@@ -199,12 +207,7 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
           return;
         }
         full += delta;
-        this.hub.publish(conversationId, {
-          type: 'reply.delta',
-          text: delta,
-          turn: gen,
-        });
-        this.tts.append(conversationId, gen, delta);
+        chunks.push(delta);
       }
     } catch (error) {
       if (isAbortError(error) || this.generation.get(conversationId) !== gen) {
@@ -228,6 +231,19 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
       this.logger.warn('Qwen chat returned empty reply');
       this.dropLastUser(history, userText);
       return;
+    }
+    if (
+      /已.*(?:执行|移动|旋转|抓取|完成|计划)|正在.*(?:执行|移动|旋转|抓取)|我(?:能|可以).*(?:抓取|放置|移动|旋转)/.test(
+        full,
+      )
+    ) {
+      full =
+        '这条回复没有对应的控制器执行记录。请给出具体动作指令，或说查询状态、查询能力。';
+      chunks.splice(0, chunks.length, full);
+    }
+    for (const delta of chunks) {
+      this.hub.publish(conversationId, { type: 'reply.delta', text: delta, turn: gen });
+      this.tts.append(conversationId, gen, delta);
     }
     history.push({ role: 'assistant', content: full });
     this.histories.set(conversationId, history.slice(-MAX_TURNS * 2));

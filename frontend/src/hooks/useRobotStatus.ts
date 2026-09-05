@@ -17,6 +17,23 @@ export interface CameraViewStatus {
 }
 
 export interface RobotRuntimeStatus {
+  capabilities?: {
+    skills?: string[];
+    unsupported?: string[];
+    message?: string;
+  };
+  motion?: {
+    mode?: string;
+    active_command_id?: string | null;
+    joint_positions_deg?: Record<string, number>;
+    tool_position_world_m?: number[];
+    last_command?: {
+      skill?: string;
+      state?: string;
+      message?: string;
+      max_joint_error_deg?: number;
+    };
+  };
   prompt?: string;
   prompt_version?: number;
   find_epoch?: number;

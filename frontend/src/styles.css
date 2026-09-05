@@ -2283,3 +2283,34 @@ textarea:focus-visible {
     min-height: 76vh;
   }
 }
+.motion-feedback {
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid #dce5eb;
+  border-radius: 12px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 12px;
+}
+.joint-readings {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+.joint-readings div {
+  background: white;
+  padding: 8px;
+  border-radius: 8px;
+}
+.joint-readings dt {
+  color: #64748b;
+}
+.joint-readings dd {
+  margin: 4px 0 0;
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+.motion-feedback summary {
+  cursor: pointer;
+}

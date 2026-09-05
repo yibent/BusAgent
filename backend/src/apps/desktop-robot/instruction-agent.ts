@@ -11,6 +11,8 @@ import type {
   RobotIntentName,
   TargetSpec,
 } from './instruction-types.js';
+import { motionLanguage, isMotionSupplement } from './motion-language.js';
+import { isImmediateInterrupt } from './interrupt-monitor-node.js';
 
 export const INSTRUCTION_UNDERSTANDING_REGISTRATION_KEY =
   'InstructionUnderstandingNode';
@@ -64,9 +66,12 @@ function numberFromText(value: string): number | null {
 }
 
 function intentOf(text: string): RobotIntentName {
-  if (/停止|停下|取消|别动|暂停|中止/.test(text)) return 'cancel';
-  if (/状态|进度|在做什么|做到哪|还剩/.test(text)) return 'status_query';
-  if (/放到|放入|放进|摆到|移到|放好/.test(text)) return 'pick_place';
+  if (/有什么能力|能做什么|会做什么|支持什么|支持哪些|功能|能力/.test(text))
+    return 'capabilities';
+  if (isImmediateInterrupt(text)) return 'cancel';
+  if (/状态|进度|在做什么|做到哪|还剩|执行效果|执行了吗|动了吗/.test(text))
+    return 'status_query';
+  if (/放到|放入|放进|摆到|放好/.test(text)) return 'pick_place';
   if (/抓取|抓住|拿起|取出|递给|给我拿/.test(text)) return 'pick';
   if (/跟踪|追踪|跟随/.test(text)) return 'track';
   if (/寻找|查找|找到|识别|定位|看看|找/.test(text)) return 'find';
@@ -136,7 +141,7 @@ function clarificationFor(
   target: TargetSpec,
   destination: DestinationSpec | null,
 ): string | null {
-  if (['find', 'track', 'pick', 'pick_place'].includes(intent) && !target.category) {
+  if (['find', 'pick', 'pick_place'].includes(intent) && !target.category) {
     return '你希望我处理哪个物体？';
   }
   if (intent === 'pick_place' && destination === null) {
@@ -151,10 +156,21 @@ function clarificationFor(
  */
 export function parseInstruction(text: string): ParsedInstruction {
   const source = text.trim();
-  const intent = intentOf(source);
+  let intent = intentOf(source);
+  const motion = intent === 'chat' ? motionLanguage(source) : null;
+  if (motion) intent = motion.intent;
+  if (
+    intent === 'chat' &&
+    /机械臂|末端|执行|操作|运动|抓|放|转|移动|关节|夹爪/.test(source)
+  )
+    intent = 'unsupported';
   const target = targetOf(source);
   const destination = destinationOf(source);
-  const clarification = clarificationFor(intent, target, destination);
+  const clarification =
+    motion?.clarification_question ??
+    (intent === 'unsupported'
+      ? '当前无法将这条要求转换为已支持的动作。请使用关节转动、末端平移、归位、夹爪开合或查询能力等具体指令。'
+      : clarificationFor(intent, target, destination));
   return {
     intent,
     target,
@@ -163,6 +179,7 @@ export function parseInstruction(text: string): ParsedInstruction {
     needs_clarification: clarification !== null,
     clarification_question: clarification,
     source_text: source,
+    ...(motion ? { motion: motion.motion } : {}),
   };
 }
 
@@ -170,6 +187,7 @@ export function parseInstruction(text: string): ParsedInstruction {
 export class InstructionUnderstandingNode implements InProcessAgent, OnModuleInit {
   readonly registrationKey = INSTRUCTION_UNDERSTANDING_REGISTRATION_KEY;
   private readonly logger = new Logger(InstructionUnderstandingNode.name);
+  private readonly pending = new Map<string, { text: string; at: number }>();
 
   onModuleInit(): void {
     if (!AgentClasses.has(this.registrationKey)) {
@@ -181,12 +199,40 @@ export class InstructionUnderstandingNode implements InProcessAgent, OnModuleIni
     if (context.event.eventType !== 'intent.created') return;
     const text = textPayload(context.event.payload);
     if (!text) return;
-    const parsed = parseInstruction(text);
+    const previous = this.pending.get(context.event.correlationId);
+    let parsed = parseInstruction(text);
+    if (
+      previous &&
+      Date.now() - previous.at < 120_000 &&
+      isMotionSupplement(text) &&
+      !['cancel', 'status_query', 'capabilities'].includes(parsed.intent) &&
+      (!parsed.motion || parsed.needs_clarification || parsed.intent === 'chat')
+    ) {
+      parsed = parseInstruction(previous.text + '，' + text);
+    }
+    this.pending.delete(context.event.correlationId);
+    if (
+      parsed.intent === 'cancel' &&
+      (context.event.payload as { source?: string }).source === 'stt'
+    )
+      return;
+    if (parsed.needs_clarification && parsed.motion) {
+      this.pending.set(context.event.correlationId, {
+        text: parsed.source_text,
+        at: Date.now(),
+      });
+    }
     if (parsed.intent === 'chat') {
+      await context.publish({
+        event_type: 'conversation.requested',
+        correlation_id: context.event.correlationId,
+        causation_id: context.event.eventId,
+        payload: { text },
+      });
       this.logger.debug(`conversation-only intent ${JSON.stringify(text)}`);
       return;
     }
-    const taskId = `task_${context.event.correlationId}`;
+    const taskId = `task_${context.event.eventId}`;
     await context.publish({
       event_type: 'instruction.parsed',
       correlation_id: context.event.correlationId,

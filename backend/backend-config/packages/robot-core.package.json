@@ -11,8 +11,13 @@
         "adapter": "in-process",
         "registration_key": "InstructionUnderstandingNode"
       },
-      "consumes": ["intent.created"],
-      "produces": ["instruction.parsed"],
+      "consumes": [
+        "intent.created"
+      ],
+      "produces": [
+        "instruction.parsed",
+        "conversation.requested"
+      ],
       "configuration_schema": "schemas/instruction-config.json",
       "concurrency": {
         "mode": "partitioned",
@@ -25,7 +30,10 @@
         "dead_letter": true
       },
       "permissions": {
-        "context": ["conversation.*", "task.*"],
+        "context": [
+          "conversation.*",
+          "task.*"
+        ],
         "side_effects": []
       }
     },
@@ -35,8 +43,14 @@
         "adapter": "in-process",
         "registration_key": "GroundingClarificationNode"
       },
-      "consumes": ["instruction.parsed", "scene.snapshot.updated"],
-      "produces": ["command.grounded", "clarification.requested"],
+      "consumes": [
+        "instruction.parsed",
+        "scene.snapshot.updated"
+      ],
+      "produces": [
+        "command.grounded",
+        "clarification.requested"
+      ],
       "configuration_schema": "schemas/grounding-config.json",
       "concurrency": {
         "mode": "partitioned",
@@ -49,7 +63,11 @@
         "dead_letter": true
       },
       "permissions": {
-        "context": ["task.*", "conversation.*", "scene.*"],
+        "context": [
+          "task.*",
+          "conversation.*",
+          "scene.*"
+        ],
         "side_effects": []
       }
     },
@@ -59,8 +77,14 @@
         "adapter": "in-process",
         "registration_key": "TaskPlannerNode"
       },
-      "consumes": ["command.grounded", "perception.completed"],
-      "produces": ["plan.proposed", "plan.failed"],
+      "consumes": [
+        "command.grounded",
+        "perception.completed"
+      ],
+      "produces": [
+        "plan.proposed",
+        "plan.failed"
+      ],
       "configuration_schema": "schemas/planner-config.json",
       "concurrency": {
         "mode": "partitioned",
@@ -73,7 +97,10 @@
         "dead_letter": true
       },
       "permissions": {
-        "context": ["task.*", "perception.*"],
+        "context": [
+          "task.*",
+          "perception.*"
+        ],
         "side_effects": []
       }
     },
@@ -83,8 +110,12 @@
         "adapter": "in-process",
         "registration_key": "LoopRouterNode"
       },
-      "consumes": ["plan.validated"],
-      "produces": ["execution.profile.selected"],
+      "consumes": [
+        "plan.validated"
+      ],
+      "produces": [
+        "execution.profile.selected"
+      ],
       "configuration_schema": "schemas/loop-router-config.json",
       "concurrency": {
         "mode": "partitioned",
@@ -97,7 +128,10 @@
         "dead_letter": true
       },
       "permissions": {
-        "context": ["task.*", "scene.*"],
+        "context": [
+          "task.*",
+          "scene.*"
+        ],
         "side_effects": []
       }
     },
@@ -107,8 +141,13 @@
         "adapter": "in-process",
         "registration_key": "PlanValidatorNode"
       },
-      "consumes": ["plan.proposed"],
-      "produces": ["plan.validated", "plan.rejected"],
+      "consumes": [
+        "plan.proposed"
+      ],
+      "produces": [
+        "plan.validated",
+        "plan.rejected"
+      ],
       "configuration_schema": "schemas/plan-validator-config.json",
       "concurrency": {
         "mode": "partitioned",
@@ -121,7 +160,9 @@
         "dead_letter": true
       },
       "permissions": {
-        "context": ["task.*"],
+        "context": [
+          "task.*"
+        ],
         "side_effects": []
       }
     },
@@ -131,8 +172,13 @@
         "adapter": "in-process",
         "registration_key": "InterruptMonitorNode"
       },
-      "consumes": ["transcript.delta", "transcript.final"],
-      "produces": ["interrupt.requested"],
+      "consumes": [
+        "transcript.delta",
+        "transcript.final"
+      ],
+      "produces": [
+        "interrupt.requested"
+      ],
       "configuration_schema": "schemas/interrupt-monitor-config.json",
       "concurrency": {
         "mode": "partitioned",
@@ -145,7 +191,10 @@
         "dead_letter": true
       },
       "permissions": {
-        "context": ["conversation.*", "task.*"],
+        "context": [
+          "conversation.*",
+          "task.*"
+        ],
         "side_effects": []
       }
     },
@@ -156,16 +205,19 @@
         "registration_key": "DialogueAgent"
       },
       "consumes": [
-        "intent.created",
+        "conversation.requested",
         "execution.completed",
         "execution.failed",
         "execution.unknown",
         "clarification.requested",
         "plan.rejected",
         "transcript.delta",
-        "transcript.final"
+        "transcript.final",
+        "execution.started"
       ],
-      "produces": ["reply.created"],
+      "produces": [
+        "reply.created"
+      ],
       "configuration_schema": "schemas/dialogue-config.json",
       "concurrency": {
         "mode": "partitioned",
@@ -178,7 +230,9 @@
         "dead_letter": true
       },
       "permissions": {
-        "context": ["conversation.*"],
+        "context": [
+          "conversation.*"
+        ],
         "side_effects": []
       }
     },
@@ -189,7 +243,11 @@
         "registration_key": "SttAgent"
       },
       "consumes": [],
-      "produces": ["transcript.delta", "transcript.final", "intent.created"],
+      "produces": [
+        "transcript.delta",
+        "transcript.final",
+        "intent.created"
+      ],
       "configuration_schema": "schemas/stt-config.json",
       "concurrency": {
         "mode": "partitioned",
@@ -202,7 +260,9 @@
         "dead_letter": true
       },
       "permissions": {
-        "context": ["conversation.*"],
+        "context": [
+          "conversation.*"
+        ],
         "side_effects": []
       }
     },
@@ -226,7 +286,9 @@
         "dead_letter": true
       },
       "permissions": {
-        "context": ["conversation.*"],
+        "context": [
+          "conversation.*"
+        ],
         "side_effects": []
       }
     }

@@ -80,6 +80,14 @@ export class ExecutionCoordinatorNode implements InProcessAgent, OnModuleInit {
           }
         : validatedPlan(context.event.payload);
     if (validated === null) throw new Error('plan.validated payload is invalid');
+    if (
+      context.event.eventType === 'interrupt.requested' &&
+      /停止|取消|中止/.test(
+        String((context.event.payload as { text?: string }).text ?? ''),
+      )
+    ) {
+      validated.plan.steps[0]!.skill = 'stop';
+    }
     const grant = ExecutionGate.authorize(
       taskId,
       taskVersion,

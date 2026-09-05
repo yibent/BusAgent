@@ -13,6 +13,8 @@ type ControlResult = {
   ok: boolean;
   message: string;
   data?: unknown;
+  state?: string | undefined;
+  commandId?: string | undefined;
 };
 
 function stringConfig(
@@ -47,6 +49,12 @@ function readPlan(payload: unknown): RobotPlan | null {
 function completionMessage(plan: RobotPlan, results: ControlResult[]): string {
   const target = plan.intent.target.category ?? '目标';
   switch (plan.intent.intent) {
+    case 'motion':
+      return results.at(-1)?.message ?? '控制器未返回动作结果';
+    case 'capabilities':
+      return results.at(-1)?.message ?? '无法读取控制器能力';
+    case 'unsupported':
+      return '当前不支持该动作。';
     case 'find':
       return `已开始识别${target}。`;
     case 'track':
@@ -70,6 +78,10 @@ function statusMessage(data: unknown): string {
   if (status === null || typeof status !== 'object')
     return '已获取机械臂与视觉系统状态。';
   const record = status as Record<string, unknown>;
+  const motion = record.motion as Record<string, unknown> | undefined;
+  const last = motion?.last_command as Record<string, unknown> | undefined;
+  if (last)
+    return `机械臂当前${motion?.mode === 'moving' ? '正在运动' : '保持位置'}。最近动作${String(last.skill)}，状态${String(last.state)}：${String(last.message)}。`;
   const following = record.follow_enabled === true ? '正在跟随' : '当前已停止跟随';
   const prompt =
     typeof record.prompt === 'string' ? `，识别目标是${record.prompt}` : '';
@@ -126,7 +138,29 @@ export class HttpRobotAdapter implements RobotAdapter {
         : typeof body.error === 'string'
           ? body.error
           : `controller HTTP ${response.status}`;
-    return { ok: response.ok, message, data: body };
+    return {
+      ok: response.ok && body.ok !== false,
+      message,
+      data: body,
+      state: typeof body.state === 'string' ? body.state : undefined,
+      commandId: typeof body.command_id === 'string' ? body.command_id : undefined,
+    };
+  }
+
+  async result(commandId: string): Promise<ControlResult> {
+    const response = await fetch(
+      `${this.baseUrl.replace(/\/$/, '')}/api/commands/${encodeURIComponent(commandId)}`,
+      { signal: AbortSignal.timeout(this.timeoutMs) },
+    );
+    if (!response.ok) throw new Error(`控制器命令状态不可用：HTTP ${response.status}`);
+    const body = (await response.json()) as Record<string, unknown>;
+    return {
+      ok: body.ok !== false,
+      message: typeof body.message === 'string' ? body.message : '',
+      state: String(body.state),
+      commandId,
+      data: body,
+    };
   }
 }
 
@@ -148,7 +182,7 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
       throw new Error('robot.execute.requested payload has no valid plan');
     const taskId = context.event.taskId ?? `task_${context.event.correlationId}`;
     const taskVersion = context.event.taskVersion ?? plan.task_version;
-    const adapter: RobotAdapter = new HttpRobotAdapter(
+    const adapter = new HttpRobotAdapter(
       stringConfig(
         context.agentConfig.config,
         'controller_url',
@@ -157,18 +191,8 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
       intConfig(context.agentConfig.config, 'request_timeout_ms', 10_000),
     );
 
-    await this.publishStatus(context, 'execution.accepted', {
-      task_id: taskId,
-      steps: plan.steps.length,
-    });
-
     const results: ControlResult[] = [];
     for (const step of plan.steps) {
-      await this.publishStatus(context, 'execution.started', {
-        task_id: taskId,
-        step_id: step.id,
-        skill: step.skill,
-      });
       let result: ControlResult;
       try {
         result = await adapter.execute(
@@ -198,6 +222,18 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
         this.logger.warn(`skill ${step.skill} failed: ${result.message}`);
         return;
       }
+      await this.publishStatus(context, 'execution.accepted', {
+        task_id: taskId,
+        step_id: step.id,
+        skill: step.skill,
+        command_id: result.commandId,
+      });
+      if (result.state === 'accepted' || result.state === 'started') {
+        // Release the adapter delivery queue so voice HOLD can reach the arm.
+        // Finite motion plans currently contain exactly one controller command.
+        void this.watchMotion(context, adapter, result, step);
+        return;
+      }
       results.push(result);
     }
 
@@ -214,6 +250,54 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
       })),
     });
     this.logger.info(`completed task=${taskId} intent=${plan.intent.intent}`);
+  }
+
+  private async watchMotion(
+    context: InProcessEventContext,
+    adapter: HttpRobotAdapter,
+    first: ControlResult,
+    step: SkillStep,
+  ): Promise<void> {
+    try {
+      if (!first.commandId) throw new Error('控制器未返回命令编号，结果未知');
+      const deadline = Date.now() + 120_000;
+      let started = false;
+      while (Date.now() < deadline) {
+        const result = await adapter.result(first.commandId);
+        if (!started && result.state === 'started') {
+          started = true;
+          await this.publishStatus(context, 'execution.started', {
+            skill: step.skill,
+            step_id: step.id,
+            command_id: first.commandId,
+            message: result.message,
+          });
+        }
+        if (['completed', 'failed', 'cancelled'].includes(result.state ?? '')) {
+          await this.publishStatus(
+            context,
+            result.state === 'completed' && result.ok
+              ? 'execution.completed'
+              : 'execution.failed',
+            {
+              skill: step.skill,
+              step_id: step.id,
+              command_id: first.commandId,
+              message: result.message,
+              result: result.data,
+            },
+          );
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
+      throw new Error('等待运动结果超时，结果未知；请查询状态，不要自动重发');
+    } catch (error) {
+      await this.publishStatus(context, 'execution.unknown', {
+        skill: step.skill,
+        message: (error as Error).message,
+      }).catch((e) => this.logger.error(String(e)));
+    }
   }
 
   private async publishStatus(

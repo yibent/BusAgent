@@ -5,6 +5,9 @@ export type RobotIntentName =
   | 'track'
   | 'status_query'
   | 'cancel'
+  | 'motion'
+  | 'capabilities'
+  | 'unsupported'
   | 'chat';
 
 export interface TargetSpec {
@@ -33,6 +36,7 @@ export interface ParsedInstruction {
   needs_clarification: boolean;
   clarification_question: string | null;
   source_text: string;
+  motion?: { skill: string; params: Record<string, unknown> };
 }
 
 export interface SkillStep {

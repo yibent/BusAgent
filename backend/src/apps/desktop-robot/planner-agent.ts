@@ -38,6 +38,15 @@ export function buildPlan(
 ): RobotPlan | null {
   let steps: SkillStep[];
   switch (instruction.intent) {
+    case 'motion':
+      if (!instruction.motion || instruction.needs_clarification) return null;
+      steps = [{ id: 1, ...instruction.motion }];
+      break;
+    case 'capabilities':
+      steps = [{ id: 1, skill: 'capabilities', params: {} }];
+      break;
+    case 'unsupported':
+      return null;
     case 'find':
       steps = [
         { id: 1, skill: 'select_target', params: targetParams(instruction) },
@@ -45,11 +54,19 @@ export function buildPlan(
       ];
       break;
     case 'track':
-      steps = [
-        { id: 1, skill: 'select_target', params: targetParams(instruction) },
-        { id: 2, skill: 'perceive', params: {}, why: 'refresh scene observations' },
-        { id: 3, skill: 'follow', params: { enabled: true } },
-      ];
+      steps =
+        instruction.target.category === null
+          ? [{ id: 1, skill: 'follow', params: { enabled: true } }]
+          : [
+              { id: 1, skill: 'select_target', params: targetParams(instruction) },
+              {
+                id: 2,
+                skill: 'perceive',
+                params: {},
+                why: 'refresh scene observations',
+              },
+              { id: 3, skill: 'follow', params: { enabled: true } },
+            ];
       break;
     case 'pick':
       steps = [
@@ -100,7 +117,12 @@ export function buildPlan(
       break;
     case 'cancel':
       steps = [
-        { id: 1, skill: 'stop', params: {}, why: 'stop current following motion' },
+        {
+          id: 1,
+          skill: /停止|取消|中止/.test(instruction.source_text) ? 'stop' : 'hold',
+          params: {},
+          why: 'interrupt current motion',
+        },
       ];
       break;
     case 'chat':

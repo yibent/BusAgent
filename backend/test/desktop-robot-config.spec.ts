@@ -21,5 +21,15 @@ describe('desktop robot runtime configuration', () => {
       'in-process',
     );
     expect(registry.get('robot.device_adapter')?.concurrency.mode).toBe('serial');
+    const intentRoute = app.config.routes.find(
+      (route) => route.event === 'intent.created',
+    );
+    // Typed input originates at the built-in system.input, speech at robot.stt.
+    // Omitting a source restriction includes both without inventing an agent.
+    expect(intentRoute?.from).toBeUndefined();
+    expect(intentRoute?.to).toEqual(['robot.instruction_understanding']);
+    expect(
+      app.config.routes.find((route) => route.event === 'conversation.requested')?.to,
+    ).toEqual(['robot.dialogue']);
   });
 });
