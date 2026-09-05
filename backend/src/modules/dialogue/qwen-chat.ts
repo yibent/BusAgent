@@ -9,6 +9,10 @@ export interface QwenChatOptions {
   model: string;
   messages: ChatMessage[];
   signal?: AbortSignal;
+  temperature?: number;
+  jsonOutput?: boolean;
+  maxTokens?: number;
+  reasoning?: 'none' | 'low';
 }
 
 export interface SseLineBatch {
@@ -73,7 +77,15 @@ export async function* streamQwenChat(
       model: options.model,
       messages: options.messages,
       stream: true,
-      enable_thinking: false,
+      enable_thinking: options.reasoning === 'low',
+      ...(options.reasoning === 'low'
+        ? { reasoning_effort: 'low', preserve_thinking: false }
+        : {}),
+      ...(options.maxTokens !== undefined ? { max_tokens: options.maxTokens } : {}),
+      ...(options.temperature !== undefined
+        ? { temperature: options.temperature }
+        : {}),
+      ...(options.jsonOutput ? { response_format: { type: 'json_object' } } : {}),
     }),
     ...(options.signal !== undefined ? { signal: options.signal } : {}),
   });

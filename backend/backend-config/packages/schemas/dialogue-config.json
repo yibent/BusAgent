@@ -4,7 +4,8 @@
   "properties": {
     "prompt_file": { "type": "string" },
     "language": { "type": "string" },
-    "model": { "type": "string" }
+    "model": { "type": "string" },
+    "reasoning": { "enum": ["none", "low"] }
   },
   "required": ["prompt_file", "language"],
   "additionalProperties": true

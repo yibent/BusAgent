@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TtsAgent } from '../src/modules/tts/tts-agent.js';
 import type { TtsConnection, TtsHandlers } from '../src/modules/tts/tts-types.js';
 import { ConversationHub } from '../src/modules/conversation/conversation-hub.js';
@@ -7,6 +7,75 @@ import { HostConfig } from '../src/config/host-config.js';
 import { RuntimeState } from '../src/app/runtime-state.service.js';
 
 describe('TtsAgent', () => {
+  afterEach(() => vi.useRealTimers());
+  it('flushes at six characters, punctuation, timeout and final tail in order', async () => {
+    vi.useFakeTimers();
+    let handlers!: TtsHandlers;
+    const appendText = vi.fn();
+    const finish = vi.fn();
+    const agent = new TtsAgent(
+      HostConfig.fromEnv({ DASHSCOPE_API_KEY: 'test' }),
+      new RuntimeState(),
+      new ConversationHub(),
+      new SpeechGate(),
+      (_options, h) => {
+        handlers = h;
+        return { appendText, finish, close: vi.fn() };
+      },
+    );
+    agent.startTurn('c', 1);
+    handlers.onReady();
+    agent.append('c', 1, '这是一段');
+    await vi.advanceTimersByTimeAsync(100);
+    expect(appendText).not.toHaveBeenCalled();
+    agent.append('c', 1, '说明');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(appendText.mock.calls).toEqual([['这是一段说明']]);
+    agent.append('c', 1, '短句。');
+    await vi.advanceTimersByTimeAsync(0);
+    agent.append('c', 1, '你好');
+    await vi.advanceTimersByTimeAsync(120);
+    agent.append('c', 1, '尾巴');
+    await agent.finishTurn('c', 1);
+    expect(appendText.mock.calls).toEqual([
+      ['这是一段说明'],
+      ['短句。'],
+      ['你好'],
+      ['尾巴'],
+    ]);
+    expect(finish).toHaveBeenCalledOnce();
+    expect(appendText.mock.invocationCallOrder.at(-1)).toBeLessThan(
+      finish.mock.invocationCallOrder[0]!,
+    );
+    await vi.advanceTimersByTimeAsync(500);
+    expect(appendText).toHaveBeenCalledTimes(4);
+    agent.cancel('c');
+  });
+
+  it('drops buffered text and queued writes on cancellation before ready', async () => {
+    vi.useFakeTimers();
+    let handlers!: TtsHandlers;
+    const appendText = vi.fn();
+    const finish = vi.fn();
+    const agent = new TtsAgent(
+      HostConfig.fromEnv({ DASHSCOPE_API_KEY: 'test' }),
+      new RuntimeState(),
+      new ConversationHub(),
+      new SpeechGate(),
+      (_options, h) => {
+        handlers = h;
+        return { appendText, finish, close: vi.fn() };
+      },
+    );
+    agent.startTurn('c', 1);
+    agent.append('c', 1, '这是一段说明');
+    agent.append('c', 1, '尾巴');
+    agent.interrupt('c');
+    handlers.onReady();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(appendText).not.toHaveBeenCalled();
+    expect(finish).not.toHaveBeenCalled();
+  });
   it('streams PCM to the conversation hub and blocks STT', async () => {
     const hub = new ConversationHub();
     const gate = new SpeechGate();

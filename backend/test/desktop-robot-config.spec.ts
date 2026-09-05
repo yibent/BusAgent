@@ -1,4 +1,5 @@
 import { resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { loadPackages } from '../src/package/package-loader.js';
 import { loadApp } from '../src/app/app-loader.js';
@@ -8,6 +9,17 @@ import { ConfigSchemaValidator } from '../src/app/config-schema-validator.js';
 import { AppValidator } from '../src/app/app-validator.js';
 
 describe('desktop robot runtime configuration', () => {
+  it('separates fast non-thinking dialogue from low-reasoning semantics', () => {
+    const app = JSON.parse(
+      readFileSync('backend-config/apps/desktop-robot.app.json', 'utf8'),
+    ) as { agents: Array<{ agent_id: string; config: Record<string, unknown> }> };
+    expect(
+      app.agents.find((a) => a.agent_id === 'robot.dialogue')?.config,
+    ).toMatchObject({ model: 'qwen-flash', reasoning: 'none' });
+    expect(
+      app.agents.find((a) => a.agent_id === 'robot.instruction_understanding')?.config,
+    ).toMatchObject({ model: 'qwen3.8-flash', reasoning: 'low' });
+  });
   it('loads the real packages and validates every configured route', async () => {
     const configDir = resolve('backend-config');
     const packages = await loadPackages(resolve(configDir, 'packages'));

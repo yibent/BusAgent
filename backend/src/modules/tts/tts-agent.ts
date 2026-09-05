@@ -23,6 +23,11 @@ interface Session {
   ready: Promise<void>;
   started: boolean;
   closed: boolean;
+  finishing: boolean;
+  pendingText: string;
+  chunkChars: number;
+  flushMs: number;
+  flushTimer?: ReturnType<typeof setTimeout>;
 }
 
 function asString(value: unknown, fallback: string): string {
@@ -30,7 +35,9 @@ function asString(value: unknown, fallback: string): string {
 }
 
 function asInt(value: unknown, fallback: number): number {
-  return typeof value === 'number' && Number.isFinite(value) ? Math.trunc(value) : fallback;
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.trunc(value)
+    : fallback;
 }
 
 /**
@@ -92,6 +99,10 @@ export class TtsAgent implements InProcessAgent, OnModuleInit {
       ready,
       started: false,
       closed: false,
+      finishing: false,
+      pendingText: '',
+      chunkChars: Math.max(1, asInt(config.chunk_chars, 6)),
+      flushMs: Math.max(20, asInt(config.flush_ms, 120)),
       connection: this.connect(
         {
           apiKey,
@@ -112,10 +123,15 @@ export class TtsAgent implements InProcessAgent, OnModuleInit {
             this.closeSession(conversationId, turn);
           },
           onError: (error) => {
-            this.logger.error(`TTS stream conv=${conversationId} failed: ${error.message}`);
+            this.logger.error(
+              `TTS stream conv=${conversationId} failed: ${error.message}`,
+            );
             rejectReady(error);
             if (!session.closed) {
-              this.hub.publish(conversationId, { type: 'error', message: error.message });
+              this.hub.publish(conversationId, {
+                type: 'error',
+                message: error.message,
+              });
             }
             this.closeSession(conversationId, turn);
           },
@@ -128,23 +144,41 @@ export class TtsAgent implements InProcessAgent, OnModuleInit {
 
   append(conversationId: string, turn: number, text: string): void {
     const session = this.sessions.get(conversationId);
-    if (session === undefined || session.turn !== turn || session.closed) {
+    if (
+      session === undefined ||
+      session.turn !== turn ||
+      session.closed ||
+      session.finishing
+    ) {
       return;
     }
     if (text.length === 0) {
       return;
     }
     this.gate.appendAssistantText(conversationId, text);
-    void this.sendWhenReady(session, () => {
-      session.connection.appendText(text);
-    });
+    session.pendingText += text;
+    if (
+      Array.from(session.pendingText).length >= session.chunkChars ||
+      /[，。！？；、,.!?;：:\n]/u.test(text)
+    ) {
+      this.flushText(session);
+    } else if (!session.flushTimer) {
+      session.flushTimer = setTimeout(() => this.flushText(session), session.flushMs);
+    }
   }
 
   async finishTurn(conversationId: string, turn: number): Promise<void> {
     const session = this.sessions.get(conversationId);
-    if (session === undefined || session.turn !== turn || session.closed) {
+    if (
+      session === undefined ||
+      session.turn !== turn ||
+      session.closed ||
+      session.finishing
+    ) {
       return;
     }
+    session.finishing = true;
+    this.flushText(session);
     await this.sendWhenReady(session, () => {
       session.connection.finish();
     });
@@ -163,9 +197,19 @@ export class TtsAgent implements InProcessAgent, OnModuleInit {
     if (session === undefined || session.closed) {
       return;
     }
-    // Abruptly close the stream. In server_commit mode, clear is invalid and
-    // session.finish would return buffered audio that the user just interrupted.
+    // Close without session.finish: interrupted buffered text must never be spoken.
     this.closeSession(conversationId, session.turn, interrupted);
+  }
+
+  private flushText(session: Session): void {
+    if (session.flushTimer) clearTimeout(session.flushTimer);
+    delete session.flushTimer;
+    if (session.closed) return;
+    const text = session.pendingText;
+    session.pendingText = '';
+    // A punctuation-only tail needs no standalone audio segment.
+    if (!/[\p{L}\p{N}]/u.test(text)) return;
+    void this.sendWhenReady(session, () => session.connection.appendText(text));
   }
 
   private async sendWhenReady(session: Session, write: () => void): Promise<void> {
@@ -206,12 +250,18 @@ export class TtsAgent implements InProcessAgent, OnModuleInit {
     });
   }
 
-  private closeSession(conversationId: string, turn: number, interrupted = false): void {
+  private closeSession(
+    conversationId: string,
+    turn: number,
+    interrupted = false,
+  ): void {
     const session = this.sessions.get(conversationId);
     if (session === undefined || session.turn !== turn || session.closed) {
       return;
     }
     session.closed = true;
+    if (session.flushTimer) clearTimeout(session.flushTimer);
+    session.pendingText = '';
     session.connection.close();
     this.sessions.delete(conversationId);
     if (session.started) {

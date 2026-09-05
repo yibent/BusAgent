@@ -17,19 +17,28 @@ describe('contentDeltaFromSseData', () => {
   it('ignores done and empty chunks', () => {
     expect(contentDeltaFromSseData('[DONE]')).toBeUndefined();
     expect(contentDeltaFromSseData('{"choices":[{"delta":{}}]}')).toBeUndefined();
+    expect(
+      contentDeltaFromSseData(
+        '{"choices":[{"delta":{"reasoning_content":"internal reasoning"}}]}',
+      ),
+    ).toBeUndefined();
   });
 });
 
 describe('takeSseLineBatch', () => {
   it('keeps the incomplete trailing line in rest', () => {
-    const batch = takeSseLineBatch('data: {"choices":[{"delta":{"content":"你"}}]}\ndata: {"choi');
+    const batch = takeSseLineBatch(
+      'data: {"choices":[{"delta":{"content":"你"}}]}\ndata: {"choi',
+    );
     expect(batch.deltas).toEqual(['你']);
     expect(batch.done).toBe(false);
     expect(batch.rest).toBe('data: {"choi');
   });
 
   it('stops at [DONE]', () => {
-    const batch = takeSseLineBatch('data: {"choices":[{"delta":{"content":"好"}}]}\ndata: [DONE]\nignored\n');
+    const batch = takeSseLineBatch(
+      'data: {"choices":[{"delta":{"content":"好"}}]}\ndata: [DONE]\nignored\n',
+    );
     expect(batch.deltas).toEqual(['好']);
     expect(batch.done).toBe(true);
     expect(batch.rest).toBe('');
@@ -49,7 +58,9 @@ describe('streamQwenChat', () => {
           encoder.encode('data: {"choices":[{"delta":{"content":"你"}}]}\n'),
         );
         controller.enqueue(
-          encoder.encode('data: {"choices":[{"delta":{"content":"好"}}]}\ndata: [DONE]\n'),
+          encoder.encode(
+            'data: {"choices":[{"delta":{"content":"好"}}]}\ndata: [DONE]\n',
+          ),
         );
         controller.close();
       },
@@ -70,10 +81,20 @@ describe('streamQwenChat', () => {
       url: 'https://example.test/chat',
       model: 'qwen-plus',
       messages: [{ role: 'user', content: 'hi' }],
+      temperature: 0,
+      jsonOutput: true,
+      maxTokens: 192,
     })) {
       parts.push(delta);
     }
     expect(parts).toEqual(['你', '好']);
+    const request = vi.mocked(fetch).mock.calls[0]?.[1];
+    expect(JSON.parse(request?.body as string)).toMatchObject({
+      temperature: 0,
+      response_format: { type: 'json_object' },
+      enable_thinking: false,
+      max_tokens: 192,
+    });
   });
 
   it('throws on HTTP errors', async () => {

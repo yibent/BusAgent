@@ -37,6 +37,8 @@ export interface ParsedInstruction {
   clarification_question: string | null;
   source_text: string;
   motion?: { skill: string; params: Record<string, unknown> };
+  object_goal?: { offset_m: [number, number, number] };
+  observation?: { message: string; [key: string]: unknown };
 }
 
 export interface SkillStep {

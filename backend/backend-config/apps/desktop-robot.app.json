@@ -31,15 +31,17 @@
       "agent_id": "robot.instruction_understanding",
       "required": true,
       "config": {
-        "parser": "rules",
-        "model": "qwen3-4b"
+        "parser": "model",
+        "model": "qwen3.8-flash",
+        "reasoning": "low"
       }
     },
     {
       "agent_id": "robot.grounding_clarification",
       "required": true,
       "config": {
-        "provider": "semantic_passthrough"
+        "provider": "rgbd",
+        "controller_url": "http://127.0.0.1:7861"
       }
     },
     {
@@ -138,7 +140,8 @@
       "config": {
         "prompt_file": "prompts/dialogue.md",
         "language": "zh-CN",
-        "model": "qwen-plus"
+        "model": "qwen-flash",
+        "reasoning": "none"
       }
     },
     {
@@ -146,6 +149,8 @@
       "required": true,
       "config": {
         "model": "qwen3-tts-flash-realtime",
+        "chunk_chars": 6,
+        "flush_ms": 120,
         "voice": "Cherry",
         "sample_rate": 24000,
         "language_type": "Chinese"
@@ -166,6 +171,7 @@
     }
   ],
   "routes": [
+    { "event": "observation.ready", "from": ["robot.grounding_clarification"], "to": ["robot.dialogue"] },
     {
       "event": "transcript.delta",
       "from": [

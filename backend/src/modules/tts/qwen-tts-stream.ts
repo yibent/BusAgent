@@ -66,6 +66,11 @@ export function connectQwenTts(
   });
 
   let ready = false;
+  let closed = false;
+  let inFlight = false;
+  let finishing = false;
+  let finishSent = false;
+  const queue: string[] = [];
 
   const sendJson = (payload: Record<string, unknown>): void => {
     if (socket.readyState === WebSocket.OPEN) {
@@ -79,7 +84,7 @@ export function connectQwenTts(
       type: 'session.update',
       session: {
         voice: options.voice,
-        mode: 'server_commit',
+        mode: 'commit',
         language_type: options.languageType,
         response_format: 'pcm',
         sample_rate: options.sampleRate,
@@ -87,8 +92,22 @@ export function connectQwenTts(
     });
   };
 
+  // Serialize committed segments so PCM from separate responses cannot interleave.
+  const pump = (): void => {
+    if (!ready || closed || inFlight || finishSent) return;
+    const text = queue.shift();
+    if (text !== undefined) {
+      inFlight = true;
+      sendJson({ event_id: eventId(), type: 'input_text_buffer.append', text });
+      sendJson({ event_id: eventId(), type: 'input_text_buffer.commit' });
+    } else if (finishing) {
+      finishSent = true;
+      sendJson({ event_id: eventId(), type: 'session.finish' });
+    }
+  };
+
   socket.on('message', (data, isBinary) => {
-    if (isBinary) {
+    if (isBinary || closed) {
       return;
     }
     const raw = typeof data === 'string' ? data : toUtf8(data);
@@ -105,6 +124,7 @@ export function connectQwenTts(
     if (type === 'session.updated') {
       ready = true;
       handlers.onReady();
+      pump();
       return;
     }
     if (type === 'response.audio.delta') {
@@ -117,6 +137,9 @@ export function connectQwenTts(
     if (type === 'session.finished' || type === 'response.done') {
       if (type === 'session.finished') {
         handlers.onDone();
+      } else {
+        inFlight = false;
+        pump();
       }
       return;
     }
@@ -126,30 +149,33 @@ export function connectQwenTts(
   });
 
   socket.on('error', (error) => {
-    handlers.onError(error);
+    if (!closed) handlers.onError(error);
   });
 
   socket.on('close', () => {
+    if (closed) return;
+    closed = true;
+    queue.length = 0;
     if (ready) {
       handlers.onDone();
-    }
+    } else handlers.onError(new Error('TTS connection closed before ready'));
   });
 
   return {
     appendText(text: string): void {
-      if (text.length === 0) {
+      if (text.length === 0 || closed || finishing) {
         return;
       }
-      sendJson({
-        event_id: eventId(),
-        type: 'input_text_buffer.append',
-        text,
-      });
+      queue.push(text);
+      pump();
     },
     finish(): void {
-      sendJson({ event_id: eventId(), type: 'session.finish' });
+      finishing = true;
+      pump();
     },
     close(): void {
+      closed = true;
+      queue.length = 0;
       if (
         socket.readyState === WebSocket.OPEN ||
         socket.readyState === WebSocket.CONNECTING

@@ -84,7 +84,7 @@ describe('motion language and execution truth', () => {
       'instruction.parsed',
       'instruction.parsed',
     ]);
-    expect(events[2].payload).toMatchObject({
+    expect(events[2]?.payload).toMatchObject({
       needs_clarification: false,
       motion: { skill: 'rotate', params: { axis: 'z', degrees: -90 } },
     });

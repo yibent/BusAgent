@@ -65,7 +65,7 @@ export function motionLanguage(
     needs_clarification: question !== null,
     clarification_question: question,
   });
-  if (/归位|回零|回到初始|回初始|home/.test(text)) return make('home', {});
+  if (/归位|复位|回零|回到初始|回初始|home/.test(text)) return make('home', {});
   if (/继续|恢复动作|resume/.test(text) && !/跟随|跟踪/.test(text))
     return make('resume', {});
   if (/速度|调速|慢一点|快一点/.test(source)) {

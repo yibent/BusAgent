@@ -5,7 +5,9 @@
     "model": { "type": "string" },
     "voice": { "type": "string" },
     "sample_rate": { "type": "integer" },
-    "language_type": { "type": "string" }
+    "language_type": { "type": "string" },
+    "chunk_chars": { "type": "integer", "minimum": 1 },
+    "flush_ms": { "type": "integer", "minimum": 20 }
   },
   "additionalProperties": true
 }

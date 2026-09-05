@@ -481,6 +481,14 @@ export function RobotConsolePage() {
                     } as Record<string, string>
                   )[robot.status.motion.last_command?.state ?? ""] ?? "待命"}
                 </p>
+                {robot.status.grounding && (
+                  <div>
+                    <p>最近物体定位（顶部 RGB-D）：{robot.status.grounding.prompt} · {robot.status.grounding.count} 个候选</p>
+                    <p>物体可见表面坐标（米）：{robot.status.grounding.object_position_world_m?.map(v => v.toFixed(3)).join(" / ") ?? "未获得有效深度"}</p>
+                    {robot.status.grounding.target_world_m && <p>物体偏移目标（米）：{robot.status.grounding.target_world_m.map(v => v.toFixed(3)).join(" / ")}</p>}
+                    <p>{robot.status.grounding.message}</p>
+                  </div>
+                )}
                 <details>
                   <summary>当前控制器能力</summary>
                   <p>{robot.status.capabilities?.message ?? "等待能力信息"}</p>

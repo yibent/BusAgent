@@ -115,13 +115,15 @@ export class HostConfig {
         e.BUSAGENT_REGISTRATION_WAIT_TIMEOUT_MS ?? DEFAULT_REGISTRATION_WAIT_TIMEOUT_MS,
       hostId: e.BUSAGENT_HOST_ID ?? 'host-default',
       dashscopeApiKey: e.DASHSCOPE_API_KEY ?? e.QWEN_API_KEY,
-      qwenSttWsUrl: e.QWEN_STT_WS_URL ?? 'wss://dashscope.aliyuncs.com/api-ws/v1/realtime',
+      qwenSttWsUrl:
+        e.QWEN_STT_WS_URL ?? 'wss://dashscope.aliyuncs.com/api-ws/v1/realtime',
       qwenSttModel: e.QWEN_STT_MODEL ?? 'qwen3-asr-flash-realtime',
       qwenChatUrl:
         e.QWEN_CHAT_URL ??
         'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
-      qwenChatModel: e.QWEN_CHAT_MODEL ?? 'qwen-plus',
-      qwenTtsWsUrl: e.QWEN_TTS_WS_URL ?? 'wss://dashscope.aliyuncs.com/api-ws/v1/realtime',
+      qwenChatModel: e.QWEN_CHAT_MODEL ?? 'qwen3.8-flash',
+      qwenTtsWsUrl:
+        e.QWEN_TTS_WS_URL ?? 'wss://dashscope.aliyuncs.com/api-ws/v1/realtime',
       qwenTtsModel: e.QWEN_TTS_MODEL ?? 'qwen3-tts-flash-realtime',
       qwenTtsVoice: e.QWEN_TTS_VOICE ?? 'Cherry',
     });

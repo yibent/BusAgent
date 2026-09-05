@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
-    "provider": { "enum": ["semantic_passthrough", "scene_graph"] }
+    "provider": { "enum": ["semantic_passthrough", "scene_graph", "rgbd"] }
   },
   "additionalProperties": true
 }

@@ -49,6 +49,7 @@
       ],
       "produces": [
         "command.grounded",
+        "observation.ready",
         "clarification.requested"
       ],
       "configuration_schema": "schemas/grounding-config.json",
@@ -206,6 +207,7 @@
       },
       "consumes": [
         "conversation.requested",
+        "observation.ready",
         "execution.completed",
         "execution.failed",
         "execution.unknown",

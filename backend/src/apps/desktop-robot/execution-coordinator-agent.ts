@@ -7,6 +7,7 @@ import {
 } from '../../adapters/in-process/agent-classes.js';
 import { ExecutionGate } from '../../execution/execution-gate.js';
 import type { RobotPlan } from './instruction-types.js';
+import { cancelPendingIntent } from './pending-intents.js';
 
 export const EXECUTION_COORDINATOR_REGISTRATION_KEY = 'ExecutionCoordinatorNode';
 
@@ -71,6 +72,7 @@ export class ExecutionCoordinatorNode implements InProcessAgent, OnModuleInit {
     )
       return;
     const taskId = context.event.taskId ?? `task_${context.event.correlationId}`;
+    if (context.event.eventType === 'interrupt.requested') cancelPendingIntent(context.event.correlationId);
     const taskVersion = context.event.taskVersion ?? 1;
     const validated =
       context.event.eventType === 'interrupt.requested'

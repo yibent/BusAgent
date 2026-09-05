@@ -20,6 +20,8 @@ const DEFAULT_SYSTEM_PROMPT =
   '你是 BusAgent 中严谨的工程机械臂操作助手，服务于 SO-101 与 Isaac Sim 工作单元。使用简洁、明确、专业的中文口语回答，不使用 markdown。严格区分指令已收到、计划已生成、正在执行、执行完成、执行失败和结果未知；只依据系统事件陈述事实，在收到 execution.completed 前绝不能声称动作已经完成。信息不足时只询问当前最关键的一项。';
 
 const MAX_TURNS = 12;
+const CONCISE_REPLY_PROMPT =
+  '极简回复：默认只说一句，目标不超过30个汉字。直接回答，不自我介绍、不复述问题、不加寒暄、解释、建议或结尾追问。问候只答“你好。”，致谢只答“不客气。”。不主动说“请下达指令”“需要我帮你吗”“可以查询能力”。必要澄清只问缺失的一项，保留失败原因、否定和结果未知。用户明确要求详细解释时才可用最多三句。不要为了简短而改变事实。';
 
 function payloadText(payload: unknown): string {
   if (payload !== null && typeof payload === 'object' && 'text' in payload) {
@@ -32,23 +34,23 @@ function factualReply(eventType: string, payload: unknown): string | null {
   if (payload === null || typeof payload !== 'object') return null;
   const record = payload as Record<string, unknown>;
   const message = typeof record.message === 'string' ? record.message.trim() : '';
+  if (eventType === 'observation.ready') return message || '未获得有效感知结果。';
   if (eventType === 'clarification.requested') {
     const question = typeof record.question === 'string' ? record.question.trim() : '';
-    return question || '请再说明一下要处理的物体和目标位置。';
+    return question || '目标物体和位置是什么？';
   }
   if (eventType === 'execution.completed') {
-    return message || '任务已经完成。';
+    return message || '已完成。';
   }
-  if (eventType === 'execution.started')
-    return '控制器已开始执行动作，正在等待到位反馈。';
+  if (eventType === 'execution.started') return '正在执行。';
   if (eventType === 'execution.failed') {
-    return message ? `任务没有完成：${message}` : '任务没有完成，请检查控制端状态。';
+    return message ? `未完成：${message}` : '未完成，控制端未提供原因。';
   }
   if (eventType === 'execution.unknown') {
-    return '控制端没有返回确定结果，请查看机械臂当前状态。';
+    return '结果未知，控制端未确认。';
   }
   if (eventType === 'plan.rejected') {
-    return '这条指令暂时无法生成可执行步骤，请换一种说法或补充目标位置。';
+    return message ? `无法执行：${message}` : '无法生成执行计划。';
   }
   return null;
 }
@@ -181,6 +183,8 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
         role: 'system',
         content:
           system +
+          '\n' +
+          CONCISE_REPLY_PROMPT +
           '\n你在普通交流分支，没有执行工具或任何动作事件。不能承诺执行、报告进度或列举未核验能力。操作请求应提示用户给出具体指令；能力问题应提示用户说“查询能力”。抓取和放置尚未实现。',
       },
       ...history.slice(-MAX_TURNS * 2),
@@ -190,7 +194,6 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
     this.hub.publish(conversationId, { type: 'reply.start', turn: gen });
     this.tts.startTurn(conversationId, gen);
     let full = '';
-    const chunks: string[] = [];
     try {
       for await (const delta of streamQwenChat({
         apiKey,
@@ -201,18 +204,28 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
         ),
         messages,
         signal,
+        temperature: 0.2,
+        reasoning: context.agentConfig.config.reasoning === 'low' ? 'low' : 'none',
+        maxTokens: 192,
       })) {
         if (this.generation.get(conversationId) !== gen) {
-          this.tts.cancel(conversationId);
           return;
         }
         full += delta;
-        chunks.push(delta);
+        // Ordinary chat is already separated from execution/observation events.
+        // Publish immediately; buffering for a whole-answer regex defeats streaming.
+        this.hub.publish(conversationId, {
+          type: 'reply.delta',
+          text: delta,
+          turn: gen,
+        });
+        this.tts.append(conversationId, gen, delta);
       }
     } catch (error) {
       if (isAbortError(error) || this.generation.get(conversationId) !== gen) {
         this.logger.debug(`reply aborted conv=${conversationId}`);
-        this.tts.cancel(conversationId);
+        if (this.generation.get(conversationId) === gen)
+          this.tts.cancel(conversationId);
         return;
       }
       const message = (error as Error).message;
@@ -224,26 +237,13 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
     }
 
     if (this.generation.get(conversationId) !== gen) {
-      this.tts.cancel(conversationId);
       return;
     }
     if (full.trim().length === 0) {
       this.logger.warn('Qwen chat returned empty reply');
       this.dropLastUser(history, userText);
+      this.tts.cancel(conversationId);
       return;
-    }
-    if (
-      /已.*(?:执行|移动|旋转|抓取|完成|计划)|正在.*(?:执行|移动|旋转|抓取)|我(?:能|可以).*(?:抓取|放置|移动|旋转)/.test(
-        full,
-      )
-    ) {
-      full =
-        '这条回复没有对应的控制器执行记录。请给出具体动作指令，或说查询状态、查询能力。';
-      chunks.splice(0, chunks.length, full);
-    }
-    for (const delta of chunks) {
-      this.hub.publish(conversationId, { type: 'reply.delta', text: delta, turn: gen });
-      this.tts.append(conversationId, gen, delta);
     }
     history.push({ role: 'assistant', content: full });
     this.histories.set(conversationId, history.slice(-MAX_TURNS * 2));

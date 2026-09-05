@@ -1,4 +1,7 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable, OnModuleInit, Optional } from '@nestjs/common';
+import { HostConfig } from '../../config/host-config.js';
+import { understandSemantic } from './semantic-understanding.js';
+import { intentVersion, cancelPendingIntent } from './pending-intents.js';
 import { Logger } from '../../common/logger.js';
 import {
   AgentClasses,
@@ -188,6 +191,12 @@ export class InstructionUnderstandingNode implements InProcessAgent, OnModuleIni
   readonly registrationKey = INSTRUCTION_UNDERSTANDING_REGISTRATION_KEY;
   private readonly logger = new Logger(InstructionUnderstandingNode.name);
   private readonly pending = new Map<string, { text: string; at: number }>();
+  private readonly history = new Map<
+    string,
+    { at: number; entries: ParsedInstruction[] }
+  >();
+
+  constructor(@Optional() private readonly host?: HostConfig) {}
 
   onModuleInit(): void {
     if (!AgentClasses.has(this.registrationKey)) {
@@ -196,6 +205,26 @@ export class InstructionUnderstandingNode implements InProcessAgent, OnModuleIni
   }
 
   async handle(context: InProcessEventContext): Promise<void> {
+    if (context.event.eventType !== 'intent.created') return;
+    if (isImmediateInterrupt(textPayload(context.event.payload)))
+      cancelPendingIntent(context.event.correlationId);
+    const version = intentVersion(context.event.correlationId);
+    if (
+      this.host?.dashscopeApiKey &&
+      !isImmediateInterrupt(textPayload(context.event.payload))
+    ) {
+      // Release the delivery lane while the language model works, so typed pause
+      // is not queued behind a slow semantic request.
+      void this.process(context, version).catch((error: unknown) =>
+        this.logger.error(String(error)),
+      );
+    } else await this.process(context, version);
+  }
+
+  private async process(
+    context: InProcessEventContext,
+    version: number,
+  ): Promise<void> {
     if (context.event.eventType !== 'intent.created') return;
     const text = textPayload(context.event.payload);
     if (!text) return;
@@ -211,6 +240,41 @@ export class InstructionUnderstandingNode implements InProcessAgent, OnModuleIni
       parsed = parseInstruction(previous.text + '，' + text);
     }
     this.pending.delete(context.event.correlationId);
+    if (this.host?.dashscopeApiKey && parsed.intent !== 'cancel') {
+      const remembered = this.history.get(context.event.correlationId);
+      try {
+        parsed = await understandSemantic(
+          this.host,
+          text,
+          remembered && Date.now() - remembered.at < 120_000 ? remembered.entries : [],
+          undefined,
+          typeof context.agentConfig.config.model === 'string'
+            ? context.agentConfig.config.model
+            : this.host.qwenChatModel,
+          context.agentConfig.config.reasoning === 'none' ? 'none' : 'low',
+        );
+      } catch (error) {
+        this.logger.warn(
+          `semantic understanding unavailable: ${(error as Error).message}`,
+        );
+        // Never send an unclassified operational/observation request to chat on failure.
+        parsed = {
+          ...parsed,
+          intent: 'unsupported',
+          needs_clarification: true,
+          clarification_question:
+            '语义理解服务暂时不可用，这条指令未执行。请稍后重试。',
+        };
+      }
+    }
+    if (version !== intentVersion(context.event.correlationId)) return;
+    const remembered = this.history.get(context.event.correlationId);
+    this.history.set(context.event.correlationId, {
+      at: Date.now(),
+      entries: [...(remembered?.entries ?? []), parsed].slice(-6),
+    });
+    for (const [id, memory] of this.history)
+      if (Date.now() - memory.at > 120_000) this.history.delete(id);
     if (
       parsed.intent === 'cancel' &&
       (context.event.payload as { source?: string }).source === 'stt'

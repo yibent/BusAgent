@@ -17,6 +17,15 @@ export interface CameraViewStatus {
 }
 
 export interface RobotRuntimeStatus {
+  grounding?: {
+    prompt?: string;
+    source?: string;
+    count?: number;
+    message?: string;
+    object_position_world_m?: number[];
+    target_world_m?: number[];
+    offset_m?: number[];
+  };
   capabilities?: {
     skills?: string[];
     unsupported?: string[];

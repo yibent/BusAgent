@@ -287,7 +287,7 @@ export function useConversation() {
               ),
             );
           }
-          setActivity("thinking");
+          setActivity(speakingRef.current ? "speaking" : "thinking");
           return;
         case "reply.final":
           if (

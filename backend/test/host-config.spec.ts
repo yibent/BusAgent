@@ -10,7 +10,7 @@ describe('HostConfig.fromEnv', () => {
     expect(config.dashscopeApiKey).toBeUndefined();
     expect(config.qwenSttWsUrl).toBe('wss://dashscope.aliyuncs.com/api-ws/v1/realtime');
     expect(config.qwenSttModel).toBe('qwen3-asr-flash-realtime');
-    expect(config.qwenChatModel).toBe('qwen-plus');
+    expect(config.qwenChatModel).toBe('qwen3.8-flash');
     expect(config.qwenChatUrl).toBe(
       'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
     );
