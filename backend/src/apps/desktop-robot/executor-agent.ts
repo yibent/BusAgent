@@ -374,7 +374,7 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
   ): Promise<'completed' | 'failed' | 'cancelled' | 'unknown'> {
     try {
       if (!first.commandId) throw new Error('控制器未返回命令编号，结果未知');
-      const deadline = Date.now() + 120_000;
+      const deadline = Date.now() + (step.skill === 'grasp' ? 180_000 : 120_000);
       let started = false;
       let lastPhase = '';
       let lastProgressAt = 0;
@@ -392,20 +392,26 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
         }
         const detail = result.data as Record<string, unknown> | undefined;
         const phase = typeof detail?.phase === 'string' ? detail.phase : '';
+        const progressKey = `${phase}:${String(detail?.progress_seq ?? '')}`;
         if (
           started &&
           result.state === 'started' &&
           phase &&
-          phase !== lastPhase &&
-          Date.now() - lastProgressAt >= 6_000
+          progressKey !== lastPhase
         ) {
-          lastPhase = phase;
-          lastProgressAt = Date.now();
+          lastPhase = progressKey;
+          const grasp = detail?.grasp as Record<string, unknown> | undefined;
+          const announce =
+            Date.now() - lastProgressAt >= 6_000 ||
+            ['attempt_start', 'recovery_blocked'].includes(String(grasp?.event));
+          if (announce) lastProgressAt = Date.now();
           await this.publishStatus(context, 'execution.progress', {
             skill: step.skill,
             step_id: step.id,
             command_id: first.commandId,
             phase,
+            grasp,
+            announce,
             message: result.message,
           });
         }

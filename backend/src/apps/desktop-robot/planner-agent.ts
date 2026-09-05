@@ -69,13 +69,20 @@ export function buildPlan(
             ];
       break;
     case 'pick':
-      if (instruction.needs_clarification || !instruction.target.category) return null;
+      if (
+        instruction.needs_clarification ||
+        (!instruction.target.category && !instruction.retry_last_grasp)
+      )
+        return null;
       steps = [
         // Ground only after this whole transaction acquires the physical lane.
         {
           id: 1,
           skill: 'grasp',
-          params: { target: instruction.target },
+          params: {
+            target: instruction.target,
+            ...(instruction.retry_last_grasp ? { retry_last: true } : {}),
+          },
           verify: 'visual lift verification',
         },
       ];

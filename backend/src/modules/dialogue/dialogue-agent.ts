@@ -48,7 +48,7 @@ clarification只问事件指定的缺失项，保留必要选项；observation�
 function feedbackBoundary(eventType: string): string {
   const boundaries: Record<string, string> = {
     'execution.progress':
-      '这是控制器当前阶段的实测反馈。简短说明正在做什么；闭爪或抬升进行中都不等于抓取成功，不重复播报历史阶段。',
+      '这是控制器当前阶段的实测反馈。简短说明正在做什么；attempt是本次任务尝试次数，退让、重新定位、侧向观察均非抓取成功。只有恢复事件才可说正在重试；持物不确定时说明保持夹爪，不建议松爪。不要暴露内部节点，不重复历史阶段。',
     'execution.started':
       '这是控制器确认的本动作开始事件，应明确开始的是哪个动作。若该动作之前排队，且after_task对应任务已完成，可简短衔接上一动作结束、本动作现在开始，不要孤立地说轨迹开始。',
     'execution.queued':
@@ -60,7 +60,7 @@ function feedbackBoundary(eventType: string): string {
     'execution.unknown':
       '是否开始执行、是否完成均未获得确认。必须明确无法确认是否执行，绝不能说已执行、执行中、已到位。',
     'execution.failed':
-      '本次动作未完成。用当前任务的部件名称说明原因，shoulder_pan是底座，不是肩臂；不得声称正在尝试、自动调整或继续执行。',
+      '本次动作未完成。用当前任务的部件名称说明原因，shoulder_pan是底座，不是肩臂。仅当事实result.result.retry_available=true或message明确等待对话确认重试时，可简短询问是否重新观察后再试一次；等待用户明确下达重试，不声称已经重试。否则不建议重试，尤其持物不确定时保持夹爪。',
     'observation.ready':
       '只有本次感知结果，未因此发出机械臂移动或抓取。不能说正在靠近或开始移动。',
     'task.progress':
@@ -213,6 +213,11 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
           this.watch(context, task);
         }
       }
+      if (
+        context.event.eventType === 'execution.progress' &&
+        (context.event.payload as Record<string, unknown>).announce === false
+      )
+        return;
       if (context.event.taskId) {
         this.taskFeedback.add(context.event.taskId);
         if (this.taskFeedback.size > 2000)

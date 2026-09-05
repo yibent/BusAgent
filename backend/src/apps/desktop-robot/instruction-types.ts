@@ -38,6 +38,7 @@ export interface ParsedInstruction {
   source_text: string;
   motion?: { skill: string; params: Record<string, unknown> };
   object_goal?: { offset_m: [number, number, number] };
+  retry_last_grasp?: boolean;
   observation?: { message: string; [key: string]: unknown };
 }
 

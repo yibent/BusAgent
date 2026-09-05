@@ -16,7 +16,38 @@ export interface CameraViewStatus {
   detections?: DetectionStatus[];
 }
 
+export interface GraspStatus {
+  retry_available?: boolean;
+  command_id?: string;
+  state?: string;
+  phase?: string;
+  message?: string;
+  grasp?: {
+    dual_camera?: boolean;
+    attempt?: number;
+    max_attempts?: number;
+    event?: string;
+  };
+  result?: {
+    success?: boolean;
+    failure?: string;
+    message?: string;
+    metrics?: {
+      recovery_attempts?: number;
+      recovery_stop_reason?: string;
+      total_active_view_moves?: number;
+      active_view_moves?: number;
+      total_model_calls?: number;
+      model_calls?: number;
+      scene_verification?: string;
+      [key: string]: unknown;
+    };
+    attempt_results?: unknown[];
+  };
+}
+
 export interface RobotRuntimeStatus {
+  grasp?: GraspStatus | null;
   grounding?: {
     prompt?: string;
     source?: string;
@@ -27,6 +58,12 @@ export interface RobotRuntimeStatus {
     offset_m?: number[];
   };
   capabilities?: {
+    grasp?: {
+      dual_camera_default?: boolean;
+      retry_via_dialogue?: boolean;
+      max_attempts?: number;
+      scene_assisted_verification?: boolean;
+    };
     skills?: string[];
     unsupported?: string[];
     message?: string;

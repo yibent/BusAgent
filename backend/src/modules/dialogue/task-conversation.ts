@@ -27,6 +27,7 @@ export interface ConversationTask {
   waitingFor?: string;
   afterTask?: string;
   queuePosition?: number;
+  graspProgress?: unknown;
   updatedAt: number;
 }
 const ranks: Record<TaskStage, number> = {
@@ -118,6 +119,7 @@ export class TaskConversation {
       case 'execution.started':
       case 'execution.progress':
         stage = 'executing';
+        if (payload.grasp) task.graspProgress = payload.grasp;
         break;
       case 'clarification.requested':
         stage = 'clarification';
@@ -165,6 +167,7 @@ export class TaskConversation {
       stage: t.stage,
       action: actionName(t.instruction),
       feedback: t.feedback,
+      grasp_progress: t.graspProgress,
       waiting_for: t.waitingFor,
       after_task: t.afterTask,
       queue_position: t.queuePosition,
@@ -237,6 +240,8 @@ export function targetName(instruction?: ParsedInstruction): string {
 }
 
 export function actionName(instruction?: ParsedInstruction): string {
+  if (instruction?.retry_last_grasp) return '重新观察并重试上次抓取';
+  if (instruction?.intent === 'pick') return `抓取${targetName(instruction)}`;
   if (instruction?.object_goal) {
     const [x, y, z] = instruction.object_goal.offset_m;
     const offset =

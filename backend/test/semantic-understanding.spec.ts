@@ -5,11 +5,46 @@ import {
 } from '../src/apps/desktop-robot/semantic-understanding.js';
 import { HostConfig } from '../src/config/host-config.js';
 import { cancelPendingIntent } from '../src/apps/desktop-robot/pending-intents.js';
+import { buildPlan } from '../src/apps/desktop-robot/planner-agent.js';
+import { validatePlan } from '../src/apps/desktop-robot/plan-validator-node.js';
+import { summarizeCapabilities } from '../src/apps/desktop-robot/interaction-snapshot.js';
 import { GroundingClarificationNode } from '../src/apps/desktop-robot/grounding-clarification-node.js';
 import { makeEvent } from './helpers.js';
 import type { InProcessEventContext } from '../src/adapters/in-process/agent-classes.js';
 
 describe('semantic frames and RGB-D grounding', () => {
+  it('routes a conversational retry to the existing grasp, not a fresh blind pick', () => {
+    const retry = semanticFrame(
+      { intent: 'pick', retry_last_grasp: true },
+      '重新观察后再试一次',
+    );
+    const plan = buildPlan(retry, 'retry')!;
+    expect(retry.needs_clarification).toBe(false);
+    expect(plan.steps).toHaveLength(1);
+    expect(plan.steps[0]).toMatchObject({
+      skill: 'grasp',
+      params: { retry_last: true },
+    });
+    expect(validatePlan(plan)).toEqual([]);
+    const fresh = buildPlan(
+      semanticFrame({ intent: 'pick', category: 'block' }, '抓起方块'),
+      'fresh',
+    )!;
+    expect(fresh.steps[0]?.params).not.toHaveProperty('retry_last');
+    expect(() =>
+      semanticFrame({ intent: 'pick', recovery_mode: 'active' }, '抓起方块'),
+    ).toThrow();
+  });
+  it('advertises dual cameras and conversational retry only from live capability evidence', () => {
+    const summary = summarizeCapabilities({
+      skills: ['grasp'],
+      grasp: { dual_camera_default: true, retry_via_dialogue: true },
+    });
+    expect(summary).toContain('默认双相机辅助');
+    expect(summary).toContain('对话确认后恢复抓取');
+    expect(summary).toContain('放置未实现');
+    expect(summarizeCapabilities({ skills: ['grasp'] })).not.toContain('恢复抓取');
+  });
   it('keeps a natural pick as one targeted grasp, not gripper closure', () => {
     const pick = semanticFrame(
       { intent: 'pick', category: 'block', color: 'green', selector: 'leftmost' },

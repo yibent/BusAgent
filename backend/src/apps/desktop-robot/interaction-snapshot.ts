@@ -19,6 +19,11 @@ export function summarizeCapabilities(value: unknown): string {
   if (skills.has('gripper')) groups.push('夹爪开合');
   if (skills.has('hold') || skills.has('stop')) groups.push('暂停');
   if (skills.has('grasp')) groups.push('单物体抓取与抬升验证');
+  const grasp = record(capabilities.grasp);
+  if (skills.has('grasp') && grasp.dual_camera_default === true)
+    groups.push('默认双相机辅助');
+  if (skills.has('grasp') && grasp.retry_via_dialogue === true)
+    groups.push('对话确认后恢复抓取');
   const support = groups.length ? `支持${groups.join('、')}。` : '当前无可用基础动作。';
   return (
     support +
@@ -76,6 +81,8 @@ export async function readInteractionSnapshot(
       status_summary: summarizeMotion(motion, status.follow_enabled === true),
       supported_skills: capabilities.skills,
       unsupported_skills: capabilities.unsupported,
+      grasp_capabilities: capabilities.grasp,
+      grasp_status: status.grasp,
       robot_state: {
         mode: motion.mode,
         active_command_id: motion.active_command_id,

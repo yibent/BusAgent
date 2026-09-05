@@ -20,6 +20,7 @@ import {
 } from "../components/Icons";
 import { useConversation, type RobotBusEvent } from "../hooks/useConversation";
 import { useRobotStatus } from "../hooks/useRobotStatus";
+import { GraspPanel } from "../components/GraspPanel";
 
 const quickCommands = [
   "查询能力",
@@ -542,6 +543,7 @@ export function RobotConsolePage() {
             )}
           </section>
 
+          <GraspPanel status={robot.status} connected={robot.connected} />
           <section className="console-card pipeline-card">
             <div className="card-heading">
               <div>

@@ -991,9 +991,14 @@ textarea:focus-visible {
 .console-observe-column {
   min-width: 0;
   min-height: 0;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
   gap: 1rem;
+}
+
+.console-observe-column > .console-card {
+  flex-shrink: 0;
 }
 
 .console-card {
@@ -1190,7 +1195,7 @@ textarea:focus-visible {
 }
 
 .pipeline-card {
-  min-height: 0;
+  min-height: 620px;
   display: grid;
   grid-template-rows: auto auto auto minmax(0, 1fr);
 }
@@ -2313,4 +2318,20 @@ textarea:focus-visible {
 }
 .motion-feedback summary {
   cursor: pointer;
+}
+
+.grasp-panel { padding: 22px; }
+.grasp-intro, .grasp-hint { color: #64748b; font-size: 12px; line-height: 1.65; }
+.grasp-live { margin-top: 18px; padding: 14px; background: #f8fafc; border: 1px solid #dce5eb; border-radius: 10px; font-size: 13px; }
+.grasp-live-heading { display: flex; justify-content: space-between; gap: 12px; color: #334155; }
+.grasp-live-heading span { color: #64748b; font-size: 12px; }
+.grasp-live p { line-height: 1.65; }
+.grasp-warning { padding: 10px; background: #fff7ed; color: #9a3412; border-radius: 8px; }
+.grasp-results { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.grasp-results dt { color: #64748b; font-size: 11px; }
+.grasp-results dd { margin: 6px 0; color: #0f172a; font-weight: 600; }
+.grasp-live summary { cursor: pointer; color: #475569; font-size: 12px; }
+.grasp-live pre { max-height: 280px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; color: #475569; }
+@media (max-width: 640px) {
+  .grasp-panel { padding: 16px; }
 }
