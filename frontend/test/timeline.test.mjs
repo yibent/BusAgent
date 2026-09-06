@@ -36,3 +36,41 @@ test('loop annotations update running cards without ending the span', () => {
   const [clip] = buildTimeline([node('a', 'started', 1000, 'A', 'robot.instruction'), node('b', 'updated', 1500, 'A', 'robot.instruction', { loop: 'slow' })]);
   assert.equal(clip.loop, 'slow'); assert.equal(clip.end, undefined);
 });
+
+test('sequence layout gives instant events readable cards without changing timestamps', async () => {
+  const { layoutTimeline } = await import('../src/lib/timeline.ts');
+  const clips = buildTimeline(Array.from({ length: 124 }, (_, i) => event(`e${i}`, 'perception.reported', 1000 + i * 2)));
+  const display = layoutTimeline(clips, 2000);
+  assert.equal(display.items.length, 124);
+  for (const [i, item] of display.items.entries()) {
+    assert.ok(item.width >= 140);
+    assert.equal(item.clip.start, 1000 + i * 2);
+    assert.equal(item.clip.end, item.clip.start);
+    assert.equal(item.clip.lane, 0);
+    if (i) assert.ok(item.x >= display.items[i - 1].x + display.items[i - 1].width);
+  }
+});
+test('running cards grow gently and freeze on completion', async () => {
+  const { layoutTimeline } = await import('../src/lib/timeline.ts');
+  const clips = buildTimeline([event('running', 'execution.started', 1000)]);
+  const start = layoutTimeline(clips, 1000).items[0].width;
+  const tenSeconds = layoutTimeline(clips, 11000).items[0].width;
+  const minute = layoutTimeline(clips, 61000).items[0].width;
+  assert.ok(start >= 140 && tenSeconds > start && minute > tenSeconds);
+  assert.ok(tenSeconds - start < 25);
+  assert.ok(minute - start < 45);
+  const done = buildTimeline([event('running', 'execution.started', 1000), event('done', 'execution.completed', 11000)]);
+  assert.equal(layoutTimeline(done, 11000).items[0].width, layoutTimeline(done, 900000).items[0].width);
+});
+test('the non-linear axis retains overlap and aligns a shared start across tracks', async () => {
+  const { layoutTimeline } = await import('../src/lib/timeline.ts');
+  const clips = buildTimeline([
+    node('1', 'started', 1000, 'A', 'robot.instruction'),
+    node('2', 'started', 1000, 'B', 'robot.vision'),
+    node('3', 'completed', 8000, 'A', 'robot.instruction'),
+    node('4', 'completed', 12000, 'B', 'robot.vision'),
+  ]);
+  const [a,b] = layoutTimeline(clips, 20000).items;
+  assert.equal(a.x, b.x);
+  assert.ok(b.width >= a.width);
+});

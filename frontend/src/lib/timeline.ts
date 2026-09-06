@@ -244,7 +244,9 @@ export function buildTimeline(input: RobotBusEvent[]): TimelineClip[] {
     const lane = track.findIndex((end) => end <= clip.start);
     clip.lane = lane < 0 ? track.length : lane;
     track[clip.lane] =
-      clip.end === undefined ? Infinity : Math.max(clip.end, clip.start + 150);
+      clip.end === undefined
+        ? Infinity
+        : Math.max(clip.end, clip.start + 0.001);
   }
   return ordered;
 }
@@ -255,4 +257,64 @@ export function timecode(ms: number) {
     .padStart(2, "0")}:${Math.floor(seconds % 60)
     .toString()
     .padStart(2, "0")}.${Math.floor((seconds % 1) * 10)}`;
+}
+
+export interface DisplayClip {
+  clip: TimelineClip;
+  x: number;
+  width: number;
+  index: number;
+}
+/** A shared, non-linear axis: preserve ordering and overlap while making even
+ * instant events legible. These coordinates never replace recorded timestamps. */
+export function layoutTimeline(clips: TimelineClip[], now: number, scale = 1) {
+  const minimum = 140 * scale;
+  const origin = clips[0]?.start ?? now;
+  const anchors = new Set<number>();
+  const endings = new Map<number, { start: number; width: number }[]>();
+  const bounds = clips.map((clip) => {
+    const start = (clip.start - origin) * 3 + 1;
+    const elapsed = Math.max(0, (clip.end ?? now) - clip.start);
+    // An instant has a visual end after its start, but no fabricated duration.
+    const end = Math.max(
+      start + 1,
+      ((clip.end ?? Math.max(now, clip.start)) - origin) * 3,
+    );
+    const width =
+      minimum + Math.min(96, 14 * Math.log1p(elapsed / 4000)) * scale;
+    anchors.add(start);
+    anchors.add(end);
+    const constraints = endings.get(end) ?? [];
+    constraints.push({ start, width });
+    endings.set(end, constraints);
+    return { start, end };
+  });
+  const coordinates = new Map<number, number>();
+  let x = 16,
+    previous: number | undefined;
+  for (const point of [...anchors].sort((a, b) => a - b)) {
+    if (previous !== undefined) {
+      const gapMs = (point - previous) / 3;
+      x += Math.min(24, 8 + 3 * Math.log1p(gapMs / 1000)) * scale;
+    }
+    for (const constraint of endings.get(point) ?? []) {
+      x = Math.max(
+        x,
+        (coordinates.get(constraint.start) ?? 16) + constraint.width,
+      );
+    }
+    coordinates.set(point, x);
+    previous = point;
+  }
+  const items: DisplayClip[] = clips.map((clip, index) => ({
+    clip,
+    index,
+    x: coordinates.get(bounds[index].start) ?? 16,
+    width: Math.max(
+      minimum,
+      (coordinates.get(bounds[index].end) ?? 16 + minimum) -
+        (coordinates.get(bounds[index].start) ?? 16),
+    ),
+  }));
+  return { items, width: x + 160, end: x };
 }

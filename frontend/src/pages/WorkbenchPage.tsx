@@ -1,12 +1,5 @@
 import { useCallback, useState } from "react";
-import {
-  Boxes,
-  ChevronRight,
-  CircleHelp,
-  LayoutPanelTop,
-  Settings2,
-  X,
-} from "lucide-react";
+import { Boxes, CircleHelp, LayoutPanelTop, Settings2, X } from "lucide-react";
 import { useConversation } from "@/hooks/useConversation";
 import { useRobotStatus } from "@/hooks/useRobotStatus";
 import { useWorkspace } from "@/hooks/useWorkspace";
@@ -89,7 +82,6 @@ export function WorkbenchPage() {
     setSelectedClip(clip);
     setTab("node");
   }, []);
-  const sceneName = workspace?.scenes.find((s) => s.id === enteredScene)?.name;
   return (
     <TooltipProvider delayDuration={400}>
       <div className="workbench dark">
@@ -172,24 +164,11 @@ export function WorkbenchPage() {
           />
         ) : (
           <>
-            <div className="workspace-breadcrumb">
-              <span>工作区</span>
-              <ChevronRight size={12} />
-              <strong>{sceneName ?? "Panda 工作台"}</strong>
-              <span className="breadcrumb-chip">实时仿真</span>
-              <span className="workspace-status">
-                {robot.status?.held_object
-                  ? `持有 · ${robot.status.held_object}`
-                  : robot.status?.phase === "idle"
-                    ? "机械臂就绪"
-                    : (robot.status?.phase ?? "等待状态")}
-              </span>
-            </div>
             <main className="editor-workspace">
               <ResizablePanelGroup direction="vertical" key={layoutVersion}>
                 <ResizablePanel defaultSize={55} minSize={32}>
                   <ResizablePanelGroup direction="horizontal">
-                    <ResizablePanel defaultSize={26} minSize={21} maxSize={44}>
+                    <ResizablePanel defaultSize={26} minSize={21} maxSize={75}>
                       <Inspector
                         tab={tab}
                         onTab={setTab}
@@ -213,7 +192,7 @@ export function WorkbenchPage() {
                       />
                     </ResizablePanel>
                     <ResizableHandle />
-                    <ResizablePanel minSize={45}>
+                    <ResizablePanel minSize={25}>
                       <CameraPreview
                         busy={busy}
                         canEdit={!!workspace?.available}
@@ -282,12 +261,6 @@ export function WorkbenchPage() {
         <VoiceOrb
           conversation={conversation}
           disabled={page !== "simulation"}
-          onHistory={() => {
-            if (enteredScene) {
-              setPage("simulation");
-              setTab("conversation");
-            }
-          }}
         />
         {notice && (
           <div
@@ -313,10 +286,10 @@ export function WorkbenchPage() {
                 选择场景后进入仿真。拖动面板之间的分隔线，自由调整属性区、监视器与时间轴的大小。
               </p>
               <p>
-                时间轴只记录执行历史。绿色表示快环，蓝色表示慢环，灰色表示未标注环路。点击卡片查看节点详情；选择手形工具拖动浏览，使用缩放控件查看细节。
+                时间轴按调用顺序展示执行历史。绿色表示快环，蓝色表示慢环，灰色表示未标注环路。点击卡片查看节点详情；选择手形工具拖动浏览，使用缩放控件查看细节。
               </p>
               <p>
-                单点事件只表示发生时刻；具备起止记录的节点才显示执行时长。相同的端点颜色表示调用关系。
+                卡片有最小显示宽度，运行时缓慢增长，不按真实时间等比例缩放；实际起止时间和耗时可在节点详情查看。相同的端点颜色表示调用关系。
               </p>
               <p>
                 点击悬浮球开始说话，再次点击结束。悬停或用键盘聚焦悬浮球，可打开文字输入；对话可在左侧面板查看。

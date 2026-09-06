@@ -1,24 +1,13 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import {
-  ArrowUp,
-  Keyboard,
-  Loader2,
-  MessageSquareText,
-  Mic,
-  MicOff,
-  VolumeX,
-  X,
-} from "lucide-react";
+import { ArrowUp, Keyboard, Loader2, Mic, MicOff, X } from "lucide-react";
 import type { useConversation } from "@/hooks/useConversation";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 export function VoiceOrb({
   conversation,
-  onHistory,
   disabled,
 }: {
   conversation: ReturnType<typeof useConversation>;
-  onHistory: () => void;
   disabled: boolean;
 }) {
   const [typing, setTyping] = useState(false);
@@ -129,30 +118,13 @@ export function VoiceOrb({
         <Button
           variant="secondary"
           size="sm"
+          className="orb-text-button"
           onClick={() => setTyping(!typing)}
           disabled={disabled}
         >
           <Keyboard />
-          文字输入
+          <span>文字输入</span>
         </Button>
-        <Button
-          variant="secondary"
-          size="icon"
-          aria-label="查看对话"
-          onClick={onHistory}
-        >
-          <MessageSquareText />
-        </Button>
-        {conversation.isSpeaking && (
-          <Button
-            variant="secondary"
-            size="icon"
-            onClick={conversation.stopSpeaking}
-            aria-label="停止播报"
-          >
-            <VolumeX />
-          </Button>
-        )}
       </div>
       <button
         className="voice-orb"

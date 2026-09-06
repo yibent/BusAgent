@@ -295,22 +295,16 @@ export function Inspector({
         <small>INSPECTOR</small>
       </header>
       <Tabs
+        orientation="vertical"
         value={tab}
         onValueChange={(v) => onTab(v as InspectorTab)}
         className="inspector-tabs"
       >
-        <TabsList>
+        <TabsList aria-label="功能选择">
           {nodes.map((n) => (
-            <Tip key={n.id} label={n.name}>
+            <Tip key={n.id} label={n.name} side="right">
               <TabsTrigger value={n.id} aria-label={n.name}>
-                <n.Icon size={15} />
-                <span>
-                  {n.name
-                    .replace("详情", "")
-                    .replace("场景", "")
-                    .replace("机械臂配置", "机械臂")
-                    .replace("当前", "")}
-                </span>
+                <n.Icon size={17} />
               </TabsTrigger>
             </Tip>
           ))}
@@ -342,151 +336,164 @@ export function Inspector({
               </div>
             </>
           ) : (
-            <>
-              <div className="node-intro">
-                <span className={`node-type loop-${selected.loop}`}>
-                  <CircuitBoard size={18} />
-                </span>
-                <div>
-                  <strong>{selected.title}</strong>
-                  <small>{selected.agent}</small>
-                </div>
-                <span className={`state-pill ${selected.state}`}>
-                  {
+            <div className="inspector-split node-layout">
+              <div className="inspector-section node-summary">
+                <div className="node-intro">
+                  <span className={`node-type loop-${selected.loop}`}>
+                    <CircuitBoard size={18} />
+                  </span>
+                  <div>
+                    <strong>{selected.title}</strong>
+                    <small>{selected.agent}</small>
+                  </div>
+                  <span className={`state-pill ${selected.state}`}>
                     {
-                      running: "执行中",
-                      completed: "完成",
-                      failed: "失败",
-                      unknown: "待确认",
-                      event: "事件",
-                    }[selected.state]
-                  }
-                </span>
-              </div>
-              <div className="inspector-subhead">
-                <Clock3 size={13} />
-                调用信息
-              </div>
-              <div className="property-group">
-                <Property
-                  name="开始时间"
-                  value={new Date(selected.start).toLocaleTimeString("zh-CN", {
-                    hour12: false,
-                  })}
-                />
-                <Property
-                  name="执行耗时"
-                  value={
-                    selected.precise
-                      ? selected.end
-                        ? `${((selected.end - selected.start) / 1000).toFixed(3)} s`
-                        : "执行中…"
-                      : "单点事件"
-                  }
-                />
-                <Property
-                  name="所属环路"
-                  value={
-                    { fast: "快环", slow: "慢环", neutral: "未标注" }[
-                      selected.loop
-                    ]
-                  }
-                />
-                <Property
-                  name="任务标识"
-                  value={
-                    <code title={selected.taskId}>
-                      {selected.taskId?.slice(-12) ?? "会话"}
-                    </code>
-                  }
-                />
-                {selected.parentId && (
+                      {
+                        running: "执行中",
+                        completed: "完成",
+                        failed: "失败",
+                        unknown: "待确认",
+                        event: "事件",
+                      }[selected.state]
+                    }
+                  </span>
+                </div>
+                <div className="inspector-subhead">
+                  <Clock3 size={13} />
+                  调用信息
+                </div>
+                <div className="property-group">
                   <Property
-                    name="上游调用"
+                    name="开始时间"
+                    value={new Date(selected.start).toLocaleTimeString(
+                      "zh-CN",
+                      {
+                        hour12: false,
+                      },
+                    )}
+                  />
+                  <Property
+                    name="执行耗时"
                     value={
-                      <span
-                        className="causal-chip"
-                        style={{ color: linkColor(selected.parentId) }}
-                      >
-                        <i />
-                        {selected.parentId.slice(-8)}
-                      </span>
+                      selected.precise
+                        ? selected.end
+                          ? `${((selected.end - selected.start) / 1000).toFixed(3)} s`
+                          : "执行中…"
+                        : "单点事件"
                     }
                   />
-                )}
+                  <Property
+                    name="所属环路"
+                    value={
+                      { fast: "快环", slow: "慢环", neutral: "未标注" }[
+                        selected.loop
+                      ]
+                    }
+                  />
+                  <Property
+                    name="任务标识"
+                    value={
+                      <code title={selected.taskId}>
+                        {selected.taskId?.slice(-12) ?? "会话"}
+                      </code>
+                    }
+                  />
+                  {selected.parentId && (
+                    <Property
+                      name="上游调用"
+                      value={
+                        <span
+                          className="causal-chip"
+                          style={{ color: linkColor(selected.parentId) }}
+                        >
+                          <i />
+                          {selected.parentId.slice(-8)}
+                        </span>
+                      }
+                    />
+                  )}
+                </div>
               </div>
-              <div className="inspector-subhead">
-                <Radio size={13} />
-                节点事件<span>{selected.events.length}</span>
-              </div>
-              <div className="node-event-list">
-                {selected.events.map((event) => (
-                  <div className="node-event" key={event.id}>
-                    <span className="event-at">
-                      +{timecode(event.createdAt - selected.start)}
-                    </span>
-                    <div>
-                      <strong>{event.eventType}</strong>
-                      {typeof event.payload.message === "string" && (
-                        <p>{event.payload.message}</p>
-                      )}
-                      <details>
-                        <summary>
-                          <FileJson size={11} />
-                          调用数据
-                          <ChevronRight size={11} />
-                        </summary>
-                        <pre>{JSON.stringify(event.payload, null, 2)}</pre>
-                      </details>
+              <div className="inspector-section node-events">
+                <div className="inspector-subhead">
+                  <Radio size={13} />
+                  节点事件<span>{selected.events.length}</span>
+                </div>
+                <div className="node-event-list">
+                  {selected.events.map((event) => (
+                    <div className="node-event" key={event.id}>
+                      <span className="event-at">
+                        +{timecode(event.createdAt - selected.start)}
+                      </span>
+                      <div>
+                        <strong>{event.eventType}</strong>
+                        {typeof event.payload.message === "string" && (
+                          <p>{event.payload.message}</p>
+                        )}
+                        <details>
+                          <summary>
+                            <FileJson size={11} />
+                            调用数据
+                            <ChevronRight size={11} />
+                          </summary>
+                          <pre>{JSON.stringify(event.payload, null, 2)}</pre>
+                        </details>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </>
+            </div>
           )}
         </TabsContent>
         <TabsContent value="objects">
-          <div className="inspector-subhead">
-            <Box size={13} />
-            场景物体<span>{workspace?.objects.length ?? 0}</span>
-          </div>
           {workspace?.objects.length ? (
-            <>
-              <div className="object-list">
-                {workspace.objects.map((row) => (
-                  <button
-                    key={row.id}
-                    aria-pressed={object?.id === row.id}
-                    onClick={() => setObjectId(row.id)}
-                  >
-                    <Box
-                      size={14}
-                      style={
-                        row.color
-                          ? {
-                              color: `rgb(${row.color.map((c) => c * 255).join(",")})`,
-                            }
-                          : {}
-                      }
-                    />
-                    <span>
-                      {row.name}
-                      <small>{row.id}</small>
-                    </span>
-                    <ChevronRight size={12} />
-                  </button>
-                ))}
+            <div className="inspector-split object-layout">
+              <div className="inspector-section object-browser">
+                <div className="inspector-subhead">
+                  <Box size={13} />
+                  场景物体<span>{workspace.objects.length}</span>
+                </div>
+                <div className="object-list">
+                  {workspace.objects.map((row) => (
+                    <button
+                      key={row.id}
+                      aria-pressed={object?.id === row.id}
+                      onClick={() => setObjectId(row.id)}
+                    >
+                      <Box
+                        size={14}
+                        style={
+                          row.color
+                            ? {
+                                color: `rgb(${row.color.map((c) => c * 255).join(",")})`,
+                              }
+                            : {}
+                        }
+                      />
+                      <span>
+                        {row.name}
+                        <small>{row.id}</small>
+                      </span>
+                      <ChevronRight size={12} />
+                    </button>
+                  ))}
+                </div>
               </div>
-              {object && (
-                <ObjectEditor
-                  key={object.id}
-                  object={object}
-                  editable={!!workspace.available && object.editable !== false}
-                  busy={busy}
-                  onSave={onObjectSave}
-                />
-              )}
-            </>
+              <div className="inspector-section object-controls">
+                {object && (
+                  <ObjectEditor
+                    key={object.id}
+                    object={object}
+                    editable={
+                      !!workspace.available && object.editable !== false
+                    }
+                    busy={busy}
+                    onSave={onObjectSave}
+                  />
+                )}
+              </div>
+            </div>
           ) : (
             <Empty
               icon={ScanEye}
@@ -496,47 +503,56 @@ export function Inspector({
           )}
         </TabsContent>
         <TabsContent value="robot">
-          <div className="robot-intro">
-            <div className="robot-outline">
-              <Bot size={30} strokeWidth={1.2} />
-            </div>
-            <strong>Franka Panda</strong>
-            <span>7 DOF · Parallel gripper</span>
-          </div>
-          <div className="property-group">
-            <Property name="当前状态" value={status?.phase ?? "未连接"} />
-            <Property name="持有物体" value={status?.held_object ?? "空夹爪"} />
-            <Property name="控制方式" value="Arena IK" />
-          </div>
-          <div className="inspector-subhead">
-            <Activity size={13} />
-            关节状态<span>°</span>
-          </div>
-          <div className="joint-list">
-            {Object.entries(status?.motion?.joint_positions_deg ?? {}).map(
-              ([name, value], i) => (
-                <div key={name}>
-                  <span>J{i + 1}</span>
-                  <div>
-                    <i
-                      style={{
-                        width: `${Math.min(100, (Math.abs(value) / 180) * 100)}%`,
-                      }}
-                    />
-                  </div>
-                  <code>{value.toFixed(2)}</code>
+          <div className="inspector-split robot-layout">
+            <div className="inspector-section robot-summary">
+              <div className="robot-intro">
+                <div className="robot-outline">
+                  <Bot size={30} strokeWidth={1.2} />
                 </div>
-              ),
-            )}
-            {!status?.motion?.joint_positions_deg && (
-              <p className="field-help">等待关节状态</p>
-            )}
+                <strong>Franka Panda</strong>
+                <span>7 DOF · Parallel gripper</span>
+              </div>
+              <div className="property-group">
+                <Property name="当前状态" value={status?.phase ?? "未连接"} />
+                <Property
+                  name="持有物体"
+                  value={status?.held_object ?? "空夹爪"}
+                />
+                <Property name="控制方式" value="Arena IK" />
+              </div>
+              <div className="inspector-subhead">
+                <Activity size={13} />
+                关节状态<span>°</span>
+              </div>
+              <div className="joint-list">
+                {Object.entries(status?.motion?.joint_positions_deg ?? {}).map(
+                  ([name, value], i) => (
+                    <div key={name}>
+                      <span>J{i + 1}</span>
+                      <div>
+                        <i
+                          style={{
+                            width: `${Math.min(100, (Math.abs(value) / 180) * 100)}%`,
+                          }}
+                        />
+                      </div>
+                      <code>{value.toFixed(2)}</code>
+                    </div>
+                  ),
+                )}
+                {!status?.motion?.joint_positions_deg && (
+                  <p className="field-help">等待关节状态</p>
+                )}
+              </div>
+            </div>
+            <div className="inspector-section robot-controls">
+              <RobotSettings
+                workspace={workspace}
+                busy={busy}
+                onSave={onConfigSave}
+              />
+            </div>
           </div>
-          <RobotSettings
-            workspace={workspace}
-            busy={busy}
-            onSave={onConfigSave}
-          />
         </TabsContent>
         <TabsContent value="conversation">
           <div className="inspector-subhead">
