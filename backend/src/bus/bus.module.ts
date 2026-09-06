@@ -7,7 +7,6 @@ import { AdaptersModule } from '../adapters/adapters.module.js';
 import { QueueManager } from './queue/queue-manager.service.js';
 import { Router } from './routing/router.service.js';
 import { PermissionPolicy } from './routing/permission-policy.service.js';
-import { TaskBudgetTracker } from './routing/task-budget-tracker.service.js';
 import { DeliveryScheduler } from './delivery/delivery-scheduler.service.js';
 import { DeliveryService } from './delivery/delivery.service.js';
 import { EventBus } from './event-bus.service.js';
@@ -30,7 +29,6 @@ import { ConversationModule } from '../modules/conversation/conversation.module.
     QueueManager,
     Router,
     PermissionPolicy,
-    TaskBudgetTracker,
     TaskService,
     IdempotencyService,
     PhysicalActionState,

@@ -7,7 +7,6 @@ import type { AppAgentRuntime, AppSnapshot } from '../../app/startup-snapshot.js
 import type { RetryPolicy } from '../../package/package-config.js';
 import { LeaseManager } from '../../leases/lease-manager.service.js';
 import { PermissionPolicy } from './permission-policy.service.js';
-import { TaskBudgetTracker } from './task-budget-tracker.service.js';
 import { RuntimeState } from '../../app/runtime-state.service.js';
 
 export interface DeliveryTarget {
@@ -22,7 +21,7 @@ export interface DeliveryTarget {
 /**
  * Resolves where an event must go from the immutable AppSnapshot routes plus
  * any agent-suggested next hops, applying the checks of spec §12:
- * allowed set, consumes contract, lease/activity, budget, permissions.
+ * allowed set, consumes contract, lease/activity and permissions.
  */
 @Injectable()
 export class Router {
@@ -31,7 +30,6 @@ export class Router {
     private readonly leases: LeaseManager,
     private readonly runtime: RuntimeState,
     private readonly policy: PermissionPolicy,
-    private readonly budget: TaskBudgetTracker,
   ) {}
 
   resolveTargets(
@@ -97,9 +95,6 @@ export class Router {
       return false;
     }
     if (!this.leases.isActive(agentId)) {
-      return false;
-    }
-    if (event.taskId !== undefined && !this.budget.allow(event.taskId)) {
       return false;
     }
     return true;

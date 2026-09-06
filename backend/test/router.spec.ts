@@ -5,7 +5,6 @@ import { LeaseManager } from '../src/leases/lease-manager.service.js';
 import { RuntimeState } from '../src/app/runtime-state.service.js';
 import { Router } from '../src/bus/routing/router.service.js';
 import { PermissionPolicy } from '../src/bus/routing/permission-policy.service.js';
-import { TaskBudgetTracker } from '../src/bus/routing/task-budget-tracker.service.js';
 import type { AppSnapshot } from '../src/app/startup-snapshot.js';
 import type { RegistrationsRepository } from '../src/persistence/repositories/registrations.repository.js';
 import { makeEvent, makeLoadedPackage, makePackageAgent } from './helpers.js';
@@ -41,7 +40,7 @@ async function buildFixture() {
       }),
       makePackageAgent({
         agent_id: 'dialogue',
-        consumes: ['intent.created'],
+        consumes: ['intent.created', 'execution.progress', 'execution.completed'],
         produces: ['reply.created'],
         permissions: { context: ['conversation.*'], side_effects: [] },
       }),
@@ -115,7 +114,9 @@ async function buildFixture() {
         },
       ],
     ]),
-    routes: [{ event: 'intent.created', to: ['planner', 'dialogue'] }],
+    routes: [{ event: 'intent.created', to: ['planner', 'dialogue'] },
+      {event: 'execution.progress', to: ['dialogue']},
+      {event: 'execution.completed', to: ['dialogue']}],
     packageIds: ['p1'],
   };
 
@@ -126,7 +127,6 @@ async function buildFixture() {
     leases,
     runtime,
     new PermissionPolicy(),
-    new TaskBudgetTracker(),
   );
   return { clock, registry, leases, router };
 }
@@ -140,6 +140,15 @@ describe('Router.resolveTargets', () => {
     );
     const agents = targets.map((t) => t.agentId).sort();
     expect(agents).toEqual(['dialogue', 'planner']);
+  });
+
+  it('delivers completion after a long stream of physical progress events', async () => {
+    const { router } = await buildFixture();
+    for (let n = 0; n < 200; n++) {
+      router.resolveTargets(makeEvent({eventType: 'execution.progress', taskId: 'long-pick-place'}), undefined);
+    }
+    const targets = router.resolveTargets(makeEvent({eventType: 'execution.completed', taskId: 'long-pick-place'}), undefined);
+    expect(targets.map(t => t.agentId)).toEqual(['dialogue']);
   });
 
   it('stops routing to an agent once its lease expires', async () => {
