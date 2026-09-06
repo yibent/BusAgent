@@ -6,6 +6,36 @@ import { validatePlan } from '../src/apps/desktop-robot/plan-validator-node.js';
 import { summarizeCapabilities } from '../src/apps/desktop-robot/interaction-snapshot.js';
 
 describe('Arena Panda task decisions', () => {
+  it('keeps another object as the support target without a blue-pad whitelist', () => {
+    const plan = buildPlan(
+      semanticFrame(
+        {
+          intent: 'pick_place',
+          category: 'block',
+          color: 'red',
+          destination: 'yellow cylinder',
+          mode: 'auto',
+        },
+        '把红色方块放到黄色柱子上',
+      ),
+      'stack',
+    )!;
+    expect(validatePlan(plan)).toEqual([]);
+    expect(plan.steps[0]?.params).toMatchObject({
+      destination: { label: 'yellow cylinder' },
+      mode: 'auto',
+    });
+  });
+  it('removes the support-relation suffix from an offline placement label', () => {
+    vi.stubEnv('BUSAGENT_ROBOT', 'franka_panda');
+    try {
+      expect(parseInstruction('把红色方块放到黄色圆柱的上面').destination?.label).toBe(
+        '黄色圆柱',
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
   it('sends one complete semantic transaction with model routing hints', () => {
     const instruction = semanticFrame(
       {
@@ -37,9 +67,13 @@ describe('Arena Panda task decisions', () => {
       expect(parsed.needs_clarification).toBe(false);
       expect(plan.steps[0]?.params).toMatchObject({
         target: { category: 'cylinder', attributes: { color: 'yellow' } },
-        destination: { label: '蓝色平台' }, mode: 'enhanced', precise: true,
+        destination: { label: '蓝色平台' },
+        mode: 'enhanced',
+        precise: true,
       });
-    } finally { vi.unstubAllEnvs(); }
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
   it('does not execute a partial pick when the destination is missing', () => {
     const instruction = semanticFrame(
