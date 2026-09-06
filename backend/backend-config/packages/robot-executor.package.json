@@ -44,7 +44,8 @@
         "execution.progress",
         "execution.completed",
         "execution.failed",
-        "execution.unknown"
+        "execution.unknown",
+        "perception.observed"
       ],
       "configuration_schema": "schemas/executor-config.json",
       "concurrency": {
@@ -58,6 +59,29 @@
       },
       "permissions": {
         "context": ["task.*"],
+        "side_effects": []
+      }
+    },
+    {
+      "agent_id": "robot.vision",
+      "endpoint": {
+        "adapter": "in-process",
+        "registration_key": "VisionNode"
+      },
+      "consumes": ["perception.observed"],
+      "produces": ["perception.reported"],
+      "configuration_schema": "schemas/executor-config.json",
+      "concurrency": {
+        "mode": "serial",
+        "limit": 1
+      },
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 0,
+        "dead_letter": true
+      },
+      "permissions": {
+        "context": [],
         "side_effects": []
       }
     }

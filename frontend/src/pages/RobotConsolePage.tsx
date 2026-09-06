@@ -146,6 +146,8 @@ const stageByEvent: Record<string, number> = {
 };
 
 const eventNames: Record<string, string> = {
+  "perception.observed": "收到视觉观测",
+  "perception.reported": "视觉结果已记录",
   "intent.created": "收到用户指令",
   "instruction.parsed": "完成结构化理解",
   "interaction.classified": "交互意图确认 · 无需设备执行",
@@ -183,6 +185,10 @@ function eventDetail(event: RobotBusEvent): string {
     return typeof latency === "number"
       ? `快速交互 · 首字 ${latency} ms`
       : "快速交互";
+  }
+  if (event.eventType === "perception.reported") {
+    const views = event.payload.views as Array<{stages?: Array<{model: string}>}> | undefined;
+    return `${event.payload.label ?? "目标"} · ${[...new Set(views?.flatMap(v => v.stages?.map(s => s.model) ?? []) ?? [])].join(" / ")}`;
   }
   const skill = event.payload.skill;
   if (event.eventType === "execution.progress" && typeof event.payload.message === "string")
@@ -380,7 +386,7 @@ export function RobotConsolePage() {
             <RobotIcon />
           </span>
           <div>
-            <p>BUSAGENT · 11-NODE EVENT BUS</p>
+            <p>BUSAGENT · 12-NODE EVENT BUS</p>
             <h1>Franka Panda 智能操作台</h1>
           </div>
         </div>
@@ -446,7 +452,7 @@ export function RobotConsolePage() {
                 <span>
                   <small>感知状态</small>
                   <strong>
-                    {detections > 0 ? `${detections} 个目标` : "等待目标"}
+                    {robot.status?.vision ? (robot.status?.vision.ok ? `已观测 ${robot.status?.vision.label}` : "观测失败") : detections > 0 ? `${detections} 个目标` : "等待目标"}
                   </strong>
                 </span>
               </div>
@@ -569,7 +575,7 @@ export function RobotConsolePage() {
             </div>
             <div className="architecture-summary">
               <div>
-                <strong>11</strong>
+                <strong>12</strong>
                 <span>职责节点</span>
               </div>
               <div>
@@ -703,6 +709,14 @@ export function RobotConsolePage() {
               </section>
             </div>
 
+            <section className="architecture-lane side-lane">
+              <header><span>视觉观测</span><small>本地推理 · 总线异步记录</small></header>
+              <div className={`compact-node ${includesEvent(taskEvents, ["perception.reported"]) ? "done" : "waiting"}`}>
+                <span className="compact-node-icon">V</span>
+                <div><strong>Florence · YOLOE · SAM2 Tiny · 光流</strong><small>图像保留在视觉服务，语言模型只处理文本</small></div>
+                <em>{includesEvent(taskEvents, ["perception.reported"]) ? "已观测" : "待命"}</em>
+              </div>
+            </section>
             <div className="event-stream">
               {taskEvents.length === 0 ? (
                 <p>说出或输入指令后，拓扑会随真实 BusAgent 事件逐节点点亮。</p>

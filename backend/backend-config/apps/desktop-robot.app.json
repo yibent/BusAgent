@@ -170,6 +170,11 @@
         "controller_url": "http://127.0.0.1:7861",
         "request_timeout_ms": 10000
       }
+    },
+    {
+      "agent_id": "robot.vision",
+      "required": true,
+      "config": {}
     }
   ],
   "routes": [
@@ -338,6 +343,11 @@
       "to": [
         "robot.dialogue"
       ]
+    },
+    {
+      "event": "perception.observed",
+      "from": ["robot.device_adapter"],
+      "to": ["robot.vision"]
     }
   ]
 }

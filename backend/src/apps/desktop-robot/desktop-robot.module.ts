@@ -13,6 +13,7 @@ import { PlanValidatorNode } from './plan-validator-node.js';
 import { InterruptMonitorNode } from './interrupt-monitor-node.js';
 import { GroundingClarificationNode } from './grounding-clarification-node.js';
 import { LoopRouterNode } from './loop-router-node.js';
+import { VisionNode } from './vision-node.js';
 import { RobotControlProxy } from './robot-control-proxy.js';
 
 /**
@@ -40,6 +41,7 @@ import { RobotControlProxy } from './robot-control-proxy.js';
     ExecutionCoordinatorNode,
     RobotAdapterNode,
     RobotControlProxy,
+    VisionNode,
   ],
   exports: [SttModule, DialogueModule, TtsModule, RobotControlProxy],
 })

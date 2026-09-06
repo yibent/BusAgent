@@ -387,6 +387,7 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
             : 120_000);
       let started = false;
       let lastPhase = '';
+      let lastObservation = '';
       let lastProgressAt = 0;
       while (Date.now() < deadline) {
         const result = await adapter.result(first.commandId);
@@ -401,6 +402,25 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
           });
         }
         const detail = result.data as Record<string, unknown> | undefined;
+        const observation = detail?.vision as Record<string, unknown> | undefined;
+        if (
+          typeof observation?.request_id === 'string' &&
+          observation.request_id !== lastObservation
+        ) {
+          lastObservation = observation.request_id;
+          await context.publish({
+            event_type: 'perception.observed',
+            correlation_id: context.event.correlationId,
+            causation_id: context.event.eventId,
+            ...(context.event.taskId
+              ? {
+                  task_id: context.event.taskId,
+                  task_version: context.event.taskVersion ?? 1,
+                }
+              : {}),
+            payload: { command_id: first.commandId, observation },
+          });
+        }
         const phase = typeof detail?.phase === 'string' ? detail.phase : '';
         const progressKey = `${phase}:${String(detail?.progress_seq ?? '')}`;
         if (

@@ -47,6 +47,7 @@ export interface GraspStatus {
 }
 
 export interface RobotRuntimeStatus {
+  vision?: {ok: boolean; label: string; elapsed_s?: number; views?: {camera: string; status: string}[]};
   robot?: string;
   phase?: string;
   command_id?: string | null;
