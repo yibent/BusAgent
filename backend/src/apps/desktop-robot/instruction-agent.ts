@@ -1,3 +1,4 @@
+import { trackBackground } from '../../observability/execution-span.js';
 import { Injectable, OnModuleInit, Optional } from '@nestjs/common';
 import { HostConfig } from '../../config/host-config.js';
 import { understandSemantic } from './semantic-understanding.js';
@@ -272,8 +273,8 @@ export class InstructionUnderstandingNode implements InProcessAgent, OnModuleIni
     ) {
       // Release the delivery lane while the language model works, so typed pause
       // is not queued behind a slow semantic request.
-      void this.process(context, version).catch((error: unknown) =>
-        this.logger.error(String(error)),
+      void trackBackground(() => this.process(context, version)).catch(
+        (error: unknown) => this.logger.error(String(error)),
       );
     } else await this.process(context, version);
   }

@@ -1,3 +1,4 @@
+import { trackBackground } from '../../observability/execution-span.js';
 import { readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
@@ -299,7 +300,9 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
       if (isSpeechPreface(payloadText(context.event.payload))) return;
       if (task && !taskFinished(task)) this.watch(context, task);
       // Release the conversation delivery lane; task feedback can preempt a slow reply.
-      void this.startReply(context).catch((error) => this.logger.error(String(error)));
+      void trackBackground(() => this.startReply(context)).catch((error) =>
+        this.logger.error(String(error)),
+      );
       return;
     }
     if (context.event.eventType !== 'conversation.requested') return;
@@ -335,8 +338,8 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
           payload: { message: text, stage: task.stage },
         },
       };
-      void this.replyWithFact(progressContext, text).catch((error) =>
-        this.logger.error(String(error)),
+      void trackBackground(() => this.replyWithFact(progressContext, text)).catch(
+        (error) => this.logger.error(String(error)),
       );
     };
     const progress = setTimeout(
@@ -394,17 +397,19 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
       AbortSignal.timeout(500),
     );
     if (this.latestInput.get(task.conversationId) !== task.id) return;
-    void this.replyWithFact(
-      {
-        ...context,
-        event: {
-          ...context.event,
-          eventType: 'interaction.resolved',
-          taskId: task.id,
-          payload: { message: fact, snapshot },
+    void trackBackground(() =>
+      this.replyWithFact(
+        {
+          ...context,
+          event: {
+            ...context.event,
+            eventType: 'interaction.resolved',
+            taskId: task.id,
+            payload: { message: fact, snapshot },
+          },
         },
-      },
-      '这句话未形成新的操作指令。',
+        '这句话未形成新的操作指令。',
+      ),
     ).catch((error) => this.logger.error(String(error)));
   }
 

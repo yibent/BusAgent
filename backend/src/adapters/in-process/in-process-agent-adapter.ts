@@ -1,3 +1,5 @@
+import { ConversationHub } from '../../modules/conversation/conversation-hub.js';
+import { traceExecution } from '../../observability/execution-span.js';
 import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import { BusAgentError } from '../../common/errors.js';
 import { ackAccepted, type DeliveryAck } from '../../protocol/ack.js';
@@ -18,6 +20,7 @@ export class InProcessAgentAdapter implements AgentAdapter {
   constructor(
     @Inject(forwardRef(() => EventBus))
     private readonly eventBus: EventBus,
+    private readonly conversationHub: ConversationHub,
   ) {}
 
   async deliver(event: BusEvent, config: AgentRuntimeConfig): Promise<DeliveryAck> {
@@ -36,16 +39,18 @@ export class InProcessAgentAdapter implements AgentAdapter {
         { agentId: config.agentId },
       );
     }
-    await agent.handle({
-      event,
-      agentConfig: config,
-      publish: async (input) => {
-        await this.eventBus.publishFromAgent(config.agentId, {
-          ...input,
-          source_agent_id: config.agentId,
-        });
-      },
-    });
+    await traceExecution(this.conversationHub, event, config.agentId, () =>
+      agent.handle({
+        event,
+        agentConfig: config,
+        publish: async (input) => {
+          await this.eventBus.publishFromAgent(config.agentId, {
+            ...input,
+            source_agent_id: config.agentId,
+          });
+        },
+      }),
+    );
     return ackAccepted();
   }
 

@@ -9,6 +9,7 @@ export interface ConversationMessage {
   text: string;
   createdAt: number;
   pending?: boolean;
+  updatedAt?: number;
 }
 
 export interface RobotBusEvent {
@@ -17,6 +18,9 @@ export interface RobotBusEvent {
   sourceAgentId: string;
   taskId?: string;
   taskVersion?: number;
+  causationId?: string;
+  correlationId?: string;
+  sourceSpanId?: string;
   createdAt: number;
   payload: Record<string, unknown>;
 }
@@ -42,6 +46,9 @@ interface ServerMessage {
   source_agent_id?: string;
   task_id?: string;
   task_version?: number;
+  causation_id?: string;
+  correlation_id?: string;
+  source_span_id?: string;
   created_at?: string;
   payload?: unknown;
 }
@@ -103,6 +110,7 @@ function rms(samples: Float32Array) {
 
 export function useConversation() {
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const [connected, setConnected] = useState(false);
   const [activity, setActivity] = useState<Activity>("connecting");
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -111,6 +119,9 @@ export function useConversation() {
   const [robotEvents, setRobotEvents] = useState<RobotBusEvent[]>([]);
 
   const socketRef = useRef<WebSocket | null>(null);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectRef = useRef<() => void>(() => {});
+  const mountedRef = useRef(false);
   const socketPromiseRef = useRef<Promise<WebSocket> | null>(null);
   const conversationIdRef = useRef(crypto.randomUUID());
   const captureRef = useRef<CaptureState>(EMPTY_CAPTURE);
@@ -146,7 +157,9 @@ export function useConversation() {
     ) => {
       setMessages((current) =>
         current.map((message) =>
-          message.id === id ? { ...message, ...changes } : message,
+          message.id === id
+            ? { ...message, ...changes, updatedAt: Date.now() }
+            : message,
         ),
       );
     },
@@ -197,6 +210,14 @@ export function useConversation() {
   const handleMessage = useCallback(
     (message: ServerMessage) => {
       switch (message.type) {
+        case "session.welcome":
+          socketRef.current?.send(
+            JSON.stringify({
+              type: "session.subscribe",
+              correlation_id: conversationIdRef.current,
+            }),
+          );
+          return;
         case "bus.event": {
           if (!message.event_type) return;
           const payload =
@@ -211,12 +232,19 @@ export function useConversation() {
             ...(typeof message.task_version === "number"
               ? { taskVersion: message.task_version }
               : {}),
+            causationId: message.causation_id,
+            correlationId: message.correlation_id,
+            sourceSpanId: message.source_span_id,
             createdAt: message.created_at
               ? new Date(message.created_at).getTime()
               : Date.now(),
             payload,
           };
-          setRobotEvents((current) => [event, ...current].slice(0, 60));
+          setRobotEvents((current) =>
+            current.some((item) => item.id === event.id)
+              ? current
+              : [event, ...current].slice(0, 5000),
+          );
           return;
         }
         case "session.ready":
@@ -281,7 +309,8 @@ export function useConversation() {
                   ? {
                       ...item,
                       text: `${item.text}${message.text ?? ""}`,
-                      pending: false,
+                      pending: true,
+                      updatedAt: Date.now(),
                     }
                   : item,
               ),
@@ -388,11 +417,32 @@ export function useConversation() {
         appendMessage("notice", "收到了无法解析的服务器消息。");
       }
     };
-    socket.onopen = () => setActivity("idle");
+    socket.onopen = () => {
+      setConnected(true);
+      setActivity("idle");
+    };
     socket.onclose = () => {
       if (socketRef.current !== socket) return;
       socketRef.current = null;
       socketPromiseRef.current = null;
+      setConnected(false);
+      setRobotEvents((current) =>
+        [
+          {
+            id: crypto.randomUUID(),
+            eventType: "connection.lost",
+            sourceAgentId: "transport",
+            createdAt: Date.now(),
+            payload: {},
+          },
+          ...current,
+        ].slice(0, 5000),
+      );
+      if (mountedRef.current)
+        reconnectTimerRef.current = setTimeout(
+          () => reconnectRef.current(),
+          2500,
+        );
       if (listeningRef.current) releaseCapture();
       if (!speakingRef.current) setActivity("error");
     };
@@ -535,13 +585,20 @@ export function useConversation() {
     void ensureSocket().catch(() => setActivity("error"));
   }, [ensureSocket, releaseCapture]);
 
+  reconnectRef.current = () => {
+    void ensureSocket().catch(() => setActivity("error"));
+  };
+
   useEffect(() => {
     let active = true;
+    mountedRef.current = true;
     void ensureSocket().catch(() => {
       if (active) setActivity("error");
     });
     return () => {
       active = false;
+      mountedRef.current = false;
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       releaseCapture();
       playerRef.current?.stop();
       const socket = socketRef.current;
@@ -553,6 +610,7 @@ export function useConversation() {
 
   return {
     messages,
+    connected,
     activity,
     isListening,
     isSpeaking,
@@ -563,5 +621,6 @@ export function useConversation() {
     toggleListening,
     stopSpeaking,
     startNewConversation,
+    clearRobotEvents: () => setRobotEvents([]),
   };
 }

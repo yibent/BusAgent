@@ -1,4 +1,6 @@
-# BusAgent
+# 刘工智能 · BusAgent
+
+<img src="frontend/public/brand/liugong-logo.png" alt="刘工智能 Logo" width="112">
 
 BusAgent 是一个面向机器人与实时人机交互场景的总线式多智能体框架。它将任务规划、自然语言交互、感知、执行和语音合成等能力拆分为可寻址节点，让消息通过总线并行、流式且有序地流转。
 
