@@ -56,6 +56,8 @@ export interface RobotRuntimeStatus {
     state: string;
     message: string;
     elapsed_s?: number;
+    fallback_used?: boolean;
+    attempts?: {backend: string; ok: boolean; elapsed_s: number; error?: string}[];
     route?: {grasp: string; placement: string | null};
     evaluation?: {max_lift_m: number; destination_xy_error_m: number; support_gap_m: number; physical_success: boolean};
   };
