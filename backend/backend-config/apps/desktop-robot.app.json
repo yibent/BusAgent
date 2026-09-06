@@ -41,7 +41,7 @@
       "agent_id": "robot.grounding_clarification",
       "required": true,
       "config": {
-        "provider": "rgbd",
+        "provider": "semantic_passthrough",
         "controller_url": "http://127.0.0.1:7861"
       }
     },
@@ -51,7 +51,8 @@
       "config": {
         "prompt_file": "prompts/planner.md",
         "model": "configured-by-agent",
-        "max_plan_depth": 8
+        "max_plan_depth": 8,
+        "perception_selects_target": true
       },
       "retry_override": {
         "max_attempts": 2

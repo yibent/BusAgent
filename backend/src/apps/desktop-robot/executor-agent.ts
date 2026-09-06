@@ -405,6 +405,7 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
         const observation = detail?.vision as Record<string, unknown> | undefined;
         if (
           typeof observation?.request_id === 'string' &&
+          observation.command_id === first.commandId &&
           observation.request_id !== lastObservation
         ) {
           lastObservation = observation.request_id;

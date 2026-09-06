@@ -35,6 +35,7 @@ export function buildPlan(
   instruction: ParsedInstruction,
   instructionId: string,
   taskVersion = 1,
+  perceptionSelectsTarget = false,
 ): RobotPlan | null {
   let steps: SkillStep[];
   switch (instruction.intent) {
@@ -48,10 +49,12 @@ export function buildPlan(
     case 'unsupported':
       return null;
     case 'find':
-      steps = [
-        { id: 1, skill: 'select_target', params: targetParams(instruction) },
-        { id: 2, skill: 'perceive', params: {}, why: 'refresh scene observations' },
-      ];
+      steps = perceptionSelectsTarget
+        ? [{ id: 1, skill: 'perceive', params: targetParams(instruction) }]
+        : [
+            { id: 1, skill: 'select_target', params: targetParams(instruction) },
+            { id: 2, skill: 'perceive', params: {}, why: 'refresh scene observations' },
+          ];
       break;
     case 'track':
       steps =
@@ -158,7 +161,12 @@ export class TaskPlannerNode implements InProcessAgent, OnModuleInit {
     const instruction = asInstruction(context.event.payload);
     if (instruction === null) throw new Error('instruction.parsed payload is invalid');
     const taskVersion = context.event.taskVersion ?? 1;
-    const plan = buildPlan(instruction, context.event.correlationId, taskVersion);
+    const plan = buildPlan(
+      instruction,
+      context.event.correlationId,
+      taskVersion,
+      context.agentConfig.config.perception_selects_target === true,
+    );
     if (plan === null) {
       await context.publish({
         event_type: 'plan.failed',

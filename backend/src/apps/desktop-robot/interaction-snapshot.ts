@@ -58,6 +58,35 @@ export function summarizeMotion(value: unknown, following = false): string {
   return `${current}。`;
 }
 
+/** Whitelist semantic evidence only; never copy raw camera/model payloads. */
+export function summarizeVision(
+  status: Record<string, unknown>,
+): Record<string, unknown> {
+  const observation = record(status.vision);
+  const views = Array.isArray(observation.views) ? observation.views.map(record) : [];
+  return {
+    source: 'last_target_observation',
+    available: typeof observation.request_id === 'string',
+    target: typeof observation.label === 'string' ? observation.label : undefined,
+    result:
+      observation.ok === true
+        ? 'observed'
+        : observation.ok === false
+          ? 'observation_failed'
+          : 'unknown',
+    request_id: observation.request_id,
+    views: views.map((view) => ({
+      camera: view.camera,
+      status: view.status,
+      sequence: view.sequence,
+    })),
+    current_sequence: status.sequence,
+    exhaustive_inventory: false,
+    interpretation:
+      '这是最近一次指定目标的观测，不是实时全场景物体清单。无记录、失败或未提及某物体均不能证明它不存在。配置目录和放置目标不受支持的报错不是视觉证据；不得把历史回复当作当前检测结果。',
+  };
+}
+
 export async function readInteractionSnapshot(
   config: Record<string, unknown>,
   signal: AbortSignal,
@@ -84,6 +113,7 @@ export async function readInteractionSnapshot(
       unsupported_skills: capabilities.unsupported,
       grasp_capabilities: capabilities.grasp,
       grasp_status: status.grasp,
+      visual_evidence: summarizeVision(status),
       robot_state: {
         mode: motion.mode,
         active_command_id: motion.active_command_id,
