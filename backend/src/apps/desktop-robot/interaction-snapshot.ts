@@ -19,6 +19,7 @@ export function summarizeCapabilities(value: unknown): string {
   if (skills.has('gripper')) groups.push('夹爪开合');
   if (skills.has('hold') || skills.has('stop')) groups.push('暂停');
   if (skills.has('grasp')) groups.push('单物体抓取与抬升验证');
+  if (skills.has('pick_place')) groups.push('Panda抓取、放置与稳定性评测');
   const grasp = record(capabilities.grasp);
   if (skills.has('grasp') && grasp.dual_camera_default === true)
     groups.push('默认双相机辅助');
@@ -28,7 +29,7 @@ export function summarizeCapabilities(value: unknown): string {
   return (
     support +
     (!skills.has('grasp') ? '抓取未接入。' : '') +
-    (!skills.has('place') ? '放置未实现。' : '')
+    (!skills.has('place') && !skills.has('pick_place') ? '放置未实现。' : '')
   );
 }
 

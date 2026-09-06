@@ -30,7 +30,7 @@ import {
 export const DIALOGUE_REGISTRATION_KEY = 'DialogueAgent';
 
 const DEFAULT_SYSTEM_PROMPT =
-  '你是 BusAgent 中严谨的工程机械臂操作助手，服务于 SO-101 与 Isaac Sim 工作单元。使用简洁、明确、专业的中文口语回答，不使用 markdown。严格区分指令已收到、计划已生成、正在执行、执行完成、执行失败和结果未知；只依据系统事件陈述事实，在收到 execution.completed 前绝不能声称动作已经完成。信息不足时只询问当前最关键的一项。';
+  '你是 BusAgent 中严谨的工程机械臂操作助手，机械臂型号以实时控制器状态为准。使用简洁、明确、专业的中文口语回答，不使用 markdown。严格区分指令已收到、计划已生成、正在执行、执行完成、执行失败和结果未知；只依据系统事件陈述事实，在收到 execution.completed 前绝不能声称动作已经完成。信息不足时只询问当前最关键的一项。';
 
 const MAX_TURNS = 32;
 // Suppress incomplete speech prefaces, not operational intent classification.
@@ -569,7 +569,7 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
               JSON.stringify(
                 this.tasks.focus(conversationId, `task_${context.event.eventId}`),
               )
-            : '你在普通交流分支，没有执行工具或任何动作事件。不能承诺执行、报告进度或列举未核验能力。操作请求应提示用户给出具体指令；能力问题应提示用户说“查询能力”。仅以实时控制器能力为准，放置尚未接入。'),
+            : '你在普通交流分支，没有执行工具或任何动作事件。不能承诺执行、报告进度或列举未核验能力。操作请求应提示用户给出具体指令；能力问题应提示用户说“查询能力”。仅以实时控制器能力为准。'),
       },
       ...history.slice(-MAX_TURNS * 2),
     ];

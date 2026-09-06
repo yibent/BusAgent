@@ -24,12 +24,11 @@ import { GraspPanel } from "../components/GraspPanel";
 
 const quickCommands = [
   "查询能力",
-  "底座顺时针转10度",
-  "向上移动1厘米",
-  "打开夹爪",
-  "闭合夹爪",
+  "把红色方块放到蓝色区域",
+  "精确把黄色圆柱放到蓝色区域",
+  "抓取红色方块",
+  "停止",
   "归位",
-  "继续执行",
   "现在什么状态",
 ];
 
@@ -382,7 +381,7 @@ export function RobotConsolePage() {
           </span>
           <div>
             <p>BUSAGENT · 11-NODE EVENT BUS</p>
-            <h1>SO-101 智能操作台</h1>
+            <h1>Franka Panda 智能操作台</h1>
           </div>
         </div>
         <div className="console-header-actions">
@@ -423,13 +422,13 @@ export function RobotConsolePage() {
                 <RobotIcon />
               </div>
               <div>
-                <span>GPU WORKCELL · SO-101</span>
+                <span>GPU WORKCELL · Franka Panda</span>
                 <h3>
                   {robot.connected ? "控制链路已就绪" : "等待 Isaac 控制器"}
                 </h3>
                 <p>
-                  Isaac Sim 画面由服务器显示器直接查看；Web
-                  端仅同步语音、任务和控制状态。
+                  IsaacLab-Arena 执行抓取与放置，三路相机画面可在仿真观察台查看。
+                  <a href="/preview/" target="_blank" rel="noreferrer">打开实时画面 ↗</a>
                 </p>
               </div>
             </div>
@@ -694,7 +693,7 @@ export function RobotConsolePage() {
                   >
                     <RobotIcon />
                     <div>
-                      <strong>SO-101</strong>
+                      <strong>Franka Panda</strong>
                       <small>
                         {robot.connected ? "Isaac 在线" : "Isaac 离线"}
                       </small>

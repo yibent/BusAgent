@@ -5,7 +5,7 @@ const apps = [
   {
     id: "robot",
     name: "机器人操作台",
-    description: "通过语音控制 SO-101，并实时查看多节点协作与并行任务路径。",
+    description: "通过语音控制 Franka Panda，并实时查看多节点协作与并行任务路径。",
     path: "/apps/robot",
     icon: "robot",
   },

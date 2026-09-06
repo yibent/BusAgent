@@ -18,11 +18,14 @@ export interface TargetSpec {
   quantity: number;
 }
 
-export interface DestinationSpec {
+export interface BinCellDestination {
   type: 'bin_cell';
   bin_id: string;
   cell_index: number;
 }
+export type DestinationSpec =
+  | BinCellDestination
+  | { type: 'named_region'; label: string };
 
 /** Structured language-understanding output described in report section 6.1. */
 export interface ParsedInstruction {
@@ -42,6 +45,12 @@ export interface ParsedInstruction {
   prepare_last_grasp?: boolean;
   grasp_preparation_id?: string;
   observation?: { message: string; [key: string]: unknown };
+  manipulation?: {
+    mode: 'auto' | 'basic' | 'enhanced';
+    unfamiliar?: boolean;
+    cluttered?: boolean;
+    precise?: boolean;
+  };
 }
 
 export interface SkillStep {

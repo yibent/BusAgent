@@ -345,7 +345,7 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
         skill: step.skill,
         command_id: result.commandId,
       });
-      if (result.state === 'accepted' || result.state === 'started') {
+      if (['accepted', 'started', 'running'].includes(result.state ?? '')) {
         // Release the adapter delivery queue so voice HOLD can reach the arm.
         // Finite motion plans currently contain exactly one controller command.
         submitted();
@@ -378,13 +378,19 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
   ): Promise<'completed' | 'failed' | 'cancelled' | 'unknown'> {
     try {
       if (!first.commandId) throw new Error('控制器未返回命令编号，结果未知');
-      const deadline = Date.now() + (step.skill === 'grasp' ? 180_000 : 120_000);
+      const deadline =
+        Date.now() +
+        (step.skill === 'pick_place'
+          ? 600_000
+          : step.skill === 'grasp'
+            ? 180_000
+            : 120_000);
       let started = false;
       let lastPhase = '';
       let lastProgressAt = 0;
       while (Date.now() < deadline) {
         const result = await adapter.result(first.commandId);
-        if (!started && result.state === 'started') {
+        if (!started && ['started', 'running'].includes(result.state ?? '')) {
           started = true;
           lastProgressAt = Date.now();
           await this.publishStatus(context, 'execution.started', {
@@ -399,7 +405,7 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
         const progressKey = `${phase}:${String(detail?.progress_seq ?? '')}`;
         if (
           started &&
-          result.state === 'started' &&
+          ['started', 'running'].includes(result.state ?? '') &&
           phase &&
           progressKey !== lastPhase
         ) {

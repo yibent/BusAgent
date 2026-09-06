@@ -29,6 +29,7 @@ export const INSTRUCTION_UNDERSTANDING_REGISTRATION_KEY =
 
 const CATEGORY_ALIASES: Array<[RegExp, string]> = [
   [/滚柱|滚子|roller/i, 'roller'],
+  [/圆柱|cylinder/i, 'cylinder'],
   [/扳手|wrench/i, 'wrench'],
   [/电钻|钻机|power\s*drill/i, 'power_drill'],
   [/积木|方块|block/i, 'block'],
@@ -137,6 +138,10 @@ function targetOf(text: string): TargetSpec {
 }
 
 function destinationOf(text: string): DestinationSpec | null {
+  if (process.env.BUSAGENT_ROBOT === 'franka_panda') {
+    const label = /(?:放到|放入|放进|摆到)\s*(.+?)[。！!]?$/u.exec(text)?.[1]?.trim();
+    if (label) return { type: 'named_region', label };
+  }
   const cellText =
     /第?\s*(\d+|[一二两三四五六七八九十]{1,2})\s*(?:号|个)?格(?:子)?/.exec(text)?.[1];
   if (!cellText) return null;
@@ -170,13 +175,19 @@ export function parseInstruction(text: string): ParsedInstruction {
     /机械臂|末端|执行|操作|运动|抓|放|转|移动|关节|夹爪/.test(source)
   )
     intent = 'unsupported';
-  const target = targetOf(source);
+  const target = targetOf(
+    intent === 'pick_place' ? source.split(/放到|放入|放进|摆到/u)[0]! : source,
+  );
   const destination = destinationOf(source);
   const clarification =
     motion?.clarification_question ??
     (intent === 'unsupported'
       ? '当前无法将这条要求转换为已支持的动作。请使用关节转动、末端平移、归位、夹爪开合或查询能力等具体指令。'
-      : clarificationFor(intent, target));
+      : intent === 'pick_place' &&
+          destination?.type === 'named_region' &&
+          target.category
+        ? null
+        : clarificationFor(intent, target));
   return {
     intent,
     target,
@@ -185,6 +196,14 @@ export function parseInstruction(text: string): ParsedInstruction {
     needs_clarification: clarification !== null,
     clarification_question: clarification,
     source_text: source,
+    ...(process.env.BUSAGENT_ROBOT === 'franka_panda' ? {
+      manipulation: {
+        mode: /增强|GraspGenX|AnyPlace/i.test(source) ? 'enhanced' as const : 'auto' as const,
+        precise: /精确|精准|整齐/.test(source),
+        unfamiliar: /陌生|未知/.test(source),
+        cluttered: /杂乱|堆叠/.test(source),
+      },
+    } : {}),
     ...(motion ? { motion: motion.motion } : {}),
   };
 }
@@ -280,14 +299,8 @@ export class InstructionUnderstandingNode implements InProcessAgent, OnModuleIni
         this.logger.warn(
           `semantic understanding unavailable: ${(error as Error).message}`,
         );
-        // Never send an unclassified operational/observation request to chat on failure.
-        parsed = {
-          ...parsed,
-          intent: 'unsupported',
-          needs_clarification: true,
-          clarification_question:
-            '语义理解服务暂时不可用，这条指令未执行。请稍后重试。',
-        };
+        // The deterministic parser already produced a task. Keep it when the
+        // optional language service is unavailable; missing fields still clarify.
       }
     }
     if (version !== intentVersion(context.event.correlationId)) return;

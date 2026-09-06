@@ -21,9 +21,6 @@ export function readPlan(payload: unknown): RobotPlan | null {
 export function validatePlan(plan: RobotPlan): string[] {
   const errors: string[] = [];
   if (plan.steps.length === 0) errors.push('plan has no steps');
-  // Runtime readiness is currently supplied by the configured desktop robot
-  // app; later this seed can come from a SceneSnapshot/health context block.
-  const facts = new Set<string>(['camera.ready']);
   for (const [index, step] of plan.steps.entries()) {
     if (step.id !== index + 1) errors.push(`step ${step.id} is out of sequence`);
     const definition = SKILL_CATALOG[step.skill];
@@ -37,12 +34,6 @@ export function validatePlan(plan: RobotPlan): string[] {
         errors.push(`step ${step.id} ${step.skill} requires parameter ${parameter}`);
       }
     }
-    for (const condition of definition.preconditions) {
-      if (!facts.has(condition)) {
-        errors.push(`step ${step.id} ${step.skill} requires ${condition}`);
-      }
-    }
-    for (const condition of definition.postconditions) facts.add(condition);
   }
   return errors;
 }

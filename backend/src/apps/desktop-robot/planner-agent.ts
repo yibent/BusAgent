@@ -71,7 +71,9 @@ export function buildPlan(
     case 'pick':
       if (
         instruction.needs_clarification ||
-        (!instruction.target.category && !instruction.retry_last_grasp && !instruction.prepare_last_grasp) ||
+        (!instruction.target.category &&
+          !instruction.retry_last_grasp &&
+          !instruction.prepare_last_grasp) ||
         (instruction.prepare_last_grasp && !instruction.grasp_preparation_id)
       )
         return null;
@@ -82,16 +84,40 @@ export function buildPlan(
           skill: 'grasp',
           params: {
             target: instruction.target,
+            ...instruction.manipulation,
             ...(instruction.retry_last_grasp ? { retry_last: true } : {}),
-            ...(instruction.prepare_last_grasp ? { prepare_last: true, proposal_id: instruction.grasp_preparation_id } : {}),
+            ...(instruction.prepare_last_grasp
+              ? { prepare_last: true, proposal_id: instruction.grasp_preparation_id }
+              : {}),
           },
-          verify: instruction.prepare_last_grasp ? 'initial preparation reached; no grasp' : 'visual lift verification',
+          verify: instruction.prepare_last_grasp
+            ? 'initial preparation reached; no grasp'
+            : 'visual lift verification',
         },
       ];
       break;
     case 'pick_place':
-      // Do not execute only the first half of an unsupported compound request.
-      return null;
+      if (
+        instruction.needs_clarification ||
+        !instruction.target.category ||
+        instruction.target.quantity !== 1 ||
+        instruction.destination?.type !== 'named_region'
+      )
+        return null;
+      steps = [
+        {
+          id: 1,
+          skill: 'pick_place',
+          params: {
+            target: instruction.target,
+            destination: instruction.destination,
+            mode: 'auto',
+            ...instruction.manipulation,
+          },
+          verify: 'Arena physical lift, release and stable placement evaluation',
+        },
+      ];
+      break;
     case 'status_query':
       steps = [{ id: 1, skill: 'status', params: {} }];
       break;

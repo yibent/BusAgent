@@ -47,6 +47,18 @@ export interface GraspStatus {
 }
 
 export interface RobotRuntimeStatus {
+  robot?: string;
+  phase?: string;
+  command_id?: string | null;
+  held_object?: string | null;
+  last_result?: {
+    ok: boolean;
+    state: string;
+    message: string;
+    elapsed_s?: number;
+    route?: {grasp: string; placement: string | null};
+    evaluation?: {max_lift_m: number; destination_xy_error_m: number; support_gap_m: number; physical_success: boolean};
+  };
   grasp?: GraspStatus | null;
   grounding?: {
     prompt?: string;

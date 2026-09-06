@@ -45,6 +45,11 @@ const frameSchema = z
     question: z.string().nullable().optional(),
     retry_last_grasp: z.boolean().optional(),
     prepare_last_grasp: z.boolean().optional(),
+    destination: z.string().min(1).max(256).optional(),
+    mode: z.enum(['auto', 'basic', 'enhanced']).optional(),
+    unfamiliar: z.boolean().optional(),
+    cluttered: z.boolean().optional(),
+    precise: z.boolean().optional(),
   })
   .strict();
 
@@ -158,12 +163,38 @@ export function semanticFrame(raw: unknown, text: string): ParsedInstruction {
     instruction.prepare_last_grasp = true;
   if (f.prepare_last_grasp && f.retry_last_grasp)
     instruction.clarification_question = '先回准备姿态还是重试抓取？请只确认一项。';
-  if (['pick_place', 'unsupported'].includes(f.intent))
+  if (f.intent === 'pick_place') {
+    if (!f.category || !f.destination)
+      instruction.clarification_question ||= '请说明要抓哪个物体，以及放到哪个区域。';
+    if (f.destination)
+      instruction.destination = { type: 'named_region', label: f.destination };
+  }
+  if (f.intent === 'pick' || f.intent === 'pick_place') {
+    instruction.manipulation = {
+      mode: f.mode ?? 'auto',
+      ...(f.unfamiliar === undefined ? {} : { unfamiliar: f.unfamiliar }),
+      ...(f.cluttered === undefined ? {} : { cluttered: f.cluttered }),
+      ...(f.precise === undefined ? {} : { precise: f.precise }),
+    };
+  }
+  if (f.intent === 'unsupported')
     instruction.clarification_question ||=
       '当前尚未接入搬运放置或这项复杂操作；可以单独下达抓取指令。';
   instruction.needs_clarification = Boolean(instruction.clarification_question);
   return instruction;
 }
+
+const PANDA_PROMPT = `你是 BusAgent 的 Franka Panda 任务决策节点。只输出一个 JSON 对象，不输出执行结果。
+你负责理解任务、确定抓哪个物体和放到哪个区域；GraspGenX生成抓取姿态，AnyPlace生成放置姿态，IsaacLab-Arena负责相机、IK、执行与评测。你不能生成物体坐标、6DoF姿态、关节角或猜测成功。
+字段：intent(pick/pick_place/find/home/cancel/status_query/capabilities/chat/unsupported), category, color, destination, mode(auto/basic/enhanced), unfamiliar, cluttered, precise, question。
+category和color采用英文常见物体名；destination是用户指定区域的短标签，例如 blue pad。不要混淆目标颜色与目的地区域颜色。
+拿起单个物体为pick；抓起并放到指定区域是一次完整pick_place事务；question仅用于目标或目的地确实无法确定的情况。
+普通抓放mode=auto；用户明确指定模型增强或要求精确摆放时mode=enhanced；陌生物体、杂乱场景和精确摆放分别标记unfamiliar/cluttered/precise。不要声称这些模型已完成任务。
+停止或暂停为cancel，回到初始位置home，查看能力capabilities，查看进度status_query。当前只支持上述高层任务；直接控制关节和末端旋转为unsupported。
+历史仅用于消歧；闲聊和附和为chat，不能触发动作。执行能力和任务结果以control_context中的当前状态为准。
+例：把红色方块放到蓝色区域=>{"intent":"pick_place","category":"block","color":"red","destination":"blue pad","mode":"auto"}。
+例：使用增强模型精确把黄色圆柱放到蓝色平台=>{"intent":"pick_place","category":"cylinder","color":"yellow","destination":"blue pad","mode":"enhanced","precise":true}。
+当前状态和完成情况只能由执行事件判断，你只给出语义任务。`;
 
 export async function understandSemantic(
   host: HostConfig,
@@ -189,7 +220,7 @@ export async function understandSemantic(
       {
         role: 'system',
         content:
-          PROMPT +
+          process.env.BUSAGENT_ROBOT === 'franka_panda' ? PANDA_PROMPT : PROMPT +
           '\n时序与因果：control_context中的实测状态和task_outcomes优先于历史指令。历史要求不代表仍在执行，取消、失败和完成都是已结束的任务。准备移动仅为回位，不是抓取；准备完成后“现在重新抓取红色方块/再次抓起来”是新的pick，应重新定位，不设retry_last_grasp或prepare_last_grasp。只有live_state.grasp_status.retry_available严格为true且用户明确恢复上次任务时才用retry_last_grasp；旧result中的标记不是当前可恢复证据。当前不可恢复时，明确的新抓取仍按普通pick；只有无法判断是否新开任务的“再试一次”才澄清。上下文可以用来解析物体指代，不得复用历史坐标或把旧的同意当成本轮授权。没有pending_preparation的“同意”不能套用历史准备问题。仅有“好，现在/嗯，接下来”等未说完的开场是chat，不得生成操作。',
       },
       {
