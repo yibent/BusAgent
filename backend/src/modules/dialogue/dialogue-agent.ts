@@ -98,8 +98,30 @@ function payloadText(payload: unknown): string {
   return '';
 }
 
+function arenaEvaluationReply(payload: unknown): string | null {
+  const result = (
+    payload as { result?: { evaluation?: Record<string, unknown> } } | null
+  )?.result;
+  const evaluation = result?.evaluation;
+  if (evaluation?.evaluation_source !== 'arena_task_simulation_ground_truth')
+    return null;
+  if (evaluation.physical_success === true)
+    return evaluation.released === true
+      ? '抓取与放置完成，物理验证通过。'
+      : '物体已抬起，抓取验证通过。';
+  if (evaluation.physical_success !== false) return null;
+  if (evaluation.lifted === true && evaluation.released === true)
+    return '物体已抓起并释放，但最终放置未通过物理验证。';
+  if (evaluation.lifted === true) return '物体已抬起，后续操作未完成。';
+  return '未能稳定抬起物体，抓取验证未通过。';
+}
+
 function factualReply(eventType: string, payload: unknown): string | null {
   if (payload === null || typeof payload !== 'object') return null;
+  if (['execution.completed', 'execution.failed'].includes(eventType)) {
+    const measured = arenaEvaluationReply(payload);
+    if (measured) return measured;
+  }
   const record = payload as Record<string, unknown>;
   const message = typeof record.message === 'string' ? record.message.trim() : '';
   if (eventType === 'observation.ready') return message || '未获得有效感知结果。';
@@ -420,6 +442,9 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
     synthesize = context.agentConfig.config.parallel_interaction === true &&
       this.hostConfig.dashscopeApiKey !== undefined,
   ): Promise<void> {
+    // Arena already supplies measured outcomes; another LLM pass can invert
+    // grasp/placement failures or invent the legacy preparation confirmation.
+    if (arenaEvaluationReply(context.event.payload)) synthesize = false;
     const conversationId = context.event.correlationId;
     const canReport = () =>
       context.agentConfig.config.parallel_interaction !== true ||

@@ -64,7 +64,7 @@ function completionMessage(plan: RobotPlan, results: ControlResult[]): string {
     case 'status_query':
       return statusMessage(results.at(-1)?.data);
     case 'cancel':
-      return '已停止机械臂跟随。';
+      return '已发送停止指令。';
     case 'pick':
       return plan.intent.prepare_last_grasp
         ? (results.at(-1)?.message ?? '初始准备移动结果未确认。')

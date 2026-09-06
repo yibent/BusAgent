@@ -18,6 +18,9 @@ describe('nominal vision node', () => {
             request_id: 'ref',
             label: 'part',
             ok: true,
+            loop: 'slow',
+            fallback_reasons: ['low_confidence'],
+            semantic_status: 'detected',
             views: [{ camera: 'scene', stages: [{ model: 'lk' }] }],
             result_ref: 'ref',
             image: 'image-bytes',
@@ -40,6 +43,11 @@ describe('nominal vision node', () => {
     expect(emitted.payload).not.toHaveProperty('image');
     expect(emitted.payload).not.toHaveProperty('mask');
     expect(emitted.payload.result_ref).toBe('ref');
+    expect(emitted.payload).toMatchObject({
+      loop: 'slow',
+      fallback_reasons: ['low_confidence'],
+      semantic_status: 'detected',
+    });
   });
   it('never routes observations into either language-model agent', () => {
     const app = JSON.parse(

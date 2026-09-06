@@ -443,7 +443,7 @@ export function RobotConsolePage() {
               <div>
                 <TargetIcon />
                 <span>
-                  <small>当前目标</small>
+                  <small>{robot.status?.visual_tracking?.enabled ? "视觉跟踪目标" : "当前目标"}</small>
                   <strong>{robot.status?.prompt ?? "—"}</strong>
                 </span>
               </div>
@@ -452,8 +452,12 @@ export function RobotConsolePage() {
                 <span>
                   <small>最近一次观测</small>
                   <strong>
-                    {robot.status?.vision ? (robot.status?.vision.ok ? robot.status.vision.scope === "scene" ? "场景观测完成" : `已观测 ${robot.status.vision.label}` : "观测失败") : detections > 0 ? `${detections} 个目标` : "等待观测"}
+                    {robot.status?.vision ? (robot.status.vision.ok ? robot.status.vision.semantic_status === "candidate" ? "候选区域 · 类别待确认" : robot.status.vision.scope === "scene" ? "场景观测完成" : `已观测 ${robot.status.vision.label}` : "观测未成功") : detections > 0 ? `${detections} 个目标` : "等待观测"}
                   </strong>
+                  {robot.status?.vision?.loop && <small title={robot.status.vision.fallback_reasons?.join("；")}>
+                    {robot.status.vision.loop === "fast" ? "快环" : "慢环"} · {robot.status.vision.elapsed_s?.toFixed(2)} 秒
+                    {robot.status.vision.observed_at ? ` · ${Math.max(0, Math.round(Date.now()/1000-robot.status.vision.observed_at))} 秒前` : ""}
+                  </small>}
                 </span>
               </div>
               <div>
@@ -713,7 +717,7 @@ export function RobotConsolePage() {
               <header><span>视觉观测</span><small>本地推理 · 总线异步记录</small></header>
               <div className={`compact-node ${includesEvent(taskEvents, ["perception.reported"]) ? "done" : "waiting"}`}>
                 <span className="compact-node-icon">V</span>
-                <div><strong>Florence · YOLOE · SAM2 Tiny · 光流</strong><small>图像保留在视觉服务，语言模型只处理文本</small></div>
+                <div><strong>快环：YOLOE · SAM2 · 光流　慢环：SAM3 · Florence</strong><small>按任务选择 · 视觉记忆复用 · 图像留在本地</small></div>
                 <em>{includesEvent(taskEvents, ["perception.reported"]) ? "已观测" : "待命"}</em>
               </div>
             </section>

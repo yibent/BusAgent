@@ -152,6 +152,7 @@ export async function readInteractionSnapshot(
         },
       },
       following: status.follow_enabled,
+      visual_tracking: status.visual_tracking,
       error: status.error,
     };
   } catch {

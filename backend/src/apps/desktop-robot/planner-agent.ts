@@ -22,6 +22,13 @@ function asInstruction(payload: unknown): ParsedInstruction | null {
 function targetParams(instruction: ParsedInstruction): Record<string, unknown> {
   return {
     ...(instruction.observation_scope ? { scope: instruction.observation_scope } : {}),
+    ...(instruction.vision?.mode ? { vision_mode: instruction.vision.mode } : {}),
+    ...(instruction.vision?.scene_mode
+      ? { scene_mode: instruction.vision.scene_mode }
+      : {}),
+    ...(instruction.vision?.slow_provider
+      ? { slow_provider: instruction.vision.slow_provider }
+      : {}),
     category: instruction.target.category,
     attributes: instruction.target.attributes,
     spatial_ref: instruction.target.spatial_ref,
@@ -58,6 +65,16 @@ export function buildPlan(
           ];
       break;
     case 'track':
+      if (perceptionSelectsTarget) {
+        steps = [
+          {
+            id: 1,
+            skill: 'perceive',
+            params: { ...targetParams(instruction), tracking: true },
+          },
+        ];
+        break;
+      }
       steps =
         instruction.target.category === null
           ? [{ id: 1, skill: 'follow', params: { enabled: true } }]

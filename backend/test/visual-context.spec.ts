@@ -97,6 +97,24 @@ it('observes the whole scene without asking for a target', () => {
   });
 });
 
+it('passes visual loop selection to Arena and uses perception for continuous visual tracking', () => {
+  const locate = semanticFrame(
+    { intent: 'find', category: 'part', vision_mode: 'slow', slow_provider: 'sam3' },
+    '用SAM3找零件',
+  );
+  expect(buildPlan(locate, 'slow-task', 1, true)?.steps[0]?.params).toMatchObject({
+    vision_mode: 'slow',
+    slow_provider: 'sam3',
+  });
+  const track = semanticFrame({ intent: 'track', category: 'part' }, '持续观察零件');
+  expect(buildPlan(track, 'track-task', 1, true)?.steps).toEqual([
+    expect.objectContaining({
+      skill: 'perceive',
+      params: expect.objectContaining({ tracking: true, category: 'part' }),
+    }),
+  ]);
+});
+
 it('summarizes fresh scene detections without leaking nested image data or candidate vocabulary', () => {
   const summary = summarizeVision({
     sequence: 30,

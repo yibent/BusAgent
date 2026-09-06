@@ -95,6 +95,32 @@ afterEach(() => {
 });
 
 describe('coherent model-generated task feedback', () => {
+  it('reports measured Panda placement failure without an LLM inventing grasp failure or confirmation', async () => {
+    const t = setup();
+    await t.agent.handle(
+      t.context('execution.failed', {
+        message: 'Physical task failed verification',
+        result: {
+          evaluation: {
+            evaluation_source: 'arena_task_simulation_ground_truth',
+            physical_success: false,
+            lifted: true,
+            released: true,
+          },
+        },
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(t.messages).toContainEqual(
+        expect.objectContaining({
+          type: 'reply.final',
+          text: '物体已抓起并释放，但最终放置未通过物理验证。',
+        }),
+      ),
+    );
+    expect(t.requests).toHaveLength(0);
+  });
+
   it('does not acknowledge an incomplete speech preface as execution', async () => {
     vi.useFakeTimers();
     const t = setup();

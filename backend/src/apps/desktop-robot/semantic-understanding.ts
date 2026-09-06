@@ -29,6 +29,9 @@ const frameSchema = z
     ]),
     category: z.string().nullable().optional(),
     scope: z.enum(['scene', 'target']).optional(),
+    vision_mode: z.enum(['auto', 'fast', 'slow']).optional(),
+    scene_mode: z.enum(['inventory', 'describe']).optional(),
+    slow_provider: z.enum(['florence2', 'sam3', 'qwen_multimodal']).optional(),
     color: z.string().nullable().optional(),
     selector: z.enum(['leftmost', 'rightmost']).nullable().optional(),
     joint: z
@@ -109,6 +112,15 @@ export function semanticFrame(raw: unknown, text: string): ParsedInstruction {
     clarification_question: f.question || null,
     source_text: text,
     ...(f.intent === 'find' ? { observation_scope: f.scope ?? 'target' } : {}),
+    ...(['find', 'track'].includes(f.intent)
+      ? {
+          vision: {
+            ...(f.vision_mode ? { mode: f.vision_mode } : {}),
+            ...(f.scene_mode ? { scene_mode: f.scene_mode } : {}),
+            ...(f.slow_provider ? { slow_provider: f.slow_provider } : {}),
+          },
+        }
+      : {}),
   };
   const motion = (skill: string, params: Record<string, unknown>, missing = false) => {
     instruction.motion = { skill, params };
@@ -188,9 +200,10 @@ export function semanticFrame(raw: unknown, text: string): ParsedInstruction {
 }
 
 const PANDA_PROMPT = `你是 BusAgent 的 Franka Panda 任务决策节点。只输出一个 JSON 对象，不输出执行结果。
+视觉采用按任务选择的快慢环。find默认vision_mode=auto，由YOLOE/视觉记忆/光流先处理，低置信度或丢失才选慢环。明确要求只用快环可用vision_mode=fast；指定慢模型可用vision_mode=slow、slow_provider=florence2/sam3。SAM3负责概念检测与分割，Florence负责场景描述和通用定位；Qwen多模态仅规划。场景描述和一般物品清单用scene_mode=describe，明确要求快速检测清单用scene_mode=inventory。无需让所有任务串行经过所有模型。普通查询不要强制slow。要求持续观察、视觉跟踪某物体用intent=track，这只持续视觉跟踪，不驱动机械臂随动。
 询问画面、场景或桌面“有什么/看到什么/有哪些东西”，包括口语或转写错字，必须输出{"intent":"find","scope":"scene"}，不继承上一个目标，不归为chat，不询问要看哪个物体。询问某个具体物体是否可见则输出find、scope=target和category/color。
 你负责理解任务、确定抓哪个物体和放到哪个区域；GraspGenX生成抓取姿态，AnyPlace生成放置姿态，IsaacLab-Arena负责相机、IK、执行与评测。你不能生成物体坐标、6DoF姿态、关节角或猜测成功。
-字段：intent(pick/pick_place/find/home/cancel/status_query/capabilities/chat/unsupported), scope(scene/target，用于find), category, color, destination, mode(auto/basic/enhanced), unfamiliar, cluttered, precise, question。
+字段：intent(pick/pick_place/find/track/home/cancel/status_query/capabilities/chat/unsupported), scope(scene/target，用于find), vision_mode(auto/fast/slow), scene_mode(inventory/describe), slow_provider(florence2/sam3), category, color, destination, mode(auto/basic/enhanced), unfamiliar, cluttered, precise, question。
 category和color采用英文常见物体名；destination是用户指定区域的短标签，例如 blue pad。不要混淆目标颜色与目的地区域颜色。
 拿起单个物体为pick；抓起并放到指定区域是一次完整pick_place事务；question仅用于目标或目的地确实无法确定的情况。
 普通抓放mode=auto；用户明确指定模型增强或要求精确摆放时mode=enhanced；陌生物体、杂乱场景和精确摆放分别标记unfamiliar/cluttered/precise。不要声称这些模型已完成任务。

@@ -40,6 +40,11 @@ export interface ParsedInstruction {
   clarification_question: string | null;
   source_text: string;
   observation_scope?: 'scene' | 'target';
+  vision?: {
+    mode?: 'auto' | 'fast' | 'slow';
+    scene_mode?: 'inventory' | 'describe';
+    slow_provider?: 'florence2' | 'sam3' | 'qwen_multimodal';
+  };
   motion?: { skill: string; params: Record<string, unknown> };
   object_goal?: { offset_m: [number, number, number] };
   retry_last_grasp?: boolean;
