@@ -1,3 +1,4 @@
+import { markExecutionLoop } from '../../observability/execution-span.js';
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;
@@ -67,6 +68,7 @@ function asBytes(chunk: unknown): Uint8Array | undefined {
 export async function* streamQwenChat(
   options: QwenChatOptions,
 ): AsyncGenerator<string> {
+  markExecutionLoop('slow', options.model);
   const response = await fetch(options.url, {
     method: 'POST',
     headers: {

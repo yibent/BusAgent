@@ -1,3 +1,4 @@
+import { trackBackground } from '../../observability/execution-span.js';
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { Logger } from '../../common/logger.js';
 import {
@@ -256,7 +257,7 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
     const accepted = new Promise<void>((resolve) => {
       submitted = resolve;
     });
-    void this.executeNow(context, submitted)
+    void trackBackground(() => this.executeNow(context, submitted))
       .catch((error) => {
         this.logger.error(String(error));
         return 'unknown' as const;

@@ -76,6 +76,8 @@ export class AudioGateway {
       unsubscribe = this.hub.subscribe(id, (message) => this.send(socket, message));
     };
 
+    this.send(socket, { type: 'session.welcome', capabilities: ['bus.timeline.v1'] });
+
     socket.on('message', (data, isBinary) => {
       this.onMessage(socket, data, isBinary, {
         getConversationId: () => conversationId,
@@ -128,6 +130,12 @@ export class AudioGateway {
     }
 
     const type = message.type ?? '';
+    if (type === 'session.subscribe') {
+      if (typeof message.correlation_id === 'string' && message.correlation_id) {
+        state.ensureHub(message.correlation_id);
+      }
+      return;
+    }
     if (type === 'session.start') {
       if (streamId !== undefined) {
         this.send(socket, { type: 'error', message: 'session already started' });

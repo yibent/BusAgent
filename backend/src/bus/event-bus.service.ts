@@ -1,3 +1,4 @@
+import { executionSpan } from '../observability/execution-span.js';
 import { Injectable } from '@nestjs/common';
 import { Logger } from '../common/logger.js';
 import { BusAgentError } from '../common/errors.js';
@@ -236,6 +237,9 @@ export class EventBus {
       source_agent_id: event.sourceAgentId,
       task_id: event.taskId,
       task_version: event.taskVersion,
+      causation_id: event.causationId,
+      correlation_id: event.correlationId,
+      source_span_id: executionSpan.getStore()?.id,
       created_at: event.createdAt,
       payload: event.payload,
     });
