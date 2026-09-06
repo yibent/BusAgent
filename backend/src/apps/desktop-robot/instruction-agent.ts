@@ -38,6 +38,12 @@ const CATEGORY_ALIASES: Array<[RegExp, string]> = [
   [/螺栓|螺丝|bolt/i, 'bolt'],
   [/齿轮|gear/i, 'gear'],
   [/咖啡杯|杯子|cup/i, 'cup'],
+  [/托盘|tray/i, 'tray'],
+  [/垫子|垫板|平台|区域|pad/i, 'pad'],
+  [/支架|bracket/i, 'bracket'],
+  [/垫圈|washer/i, 'washer'],
+  [/套筒|sleeve/i, 'sleeve'],
+  [/转轴|轴|shaft/i, 'shaft'],
 ];
 
 const COLOR_ALIASES: Array<[RegExp, string]> = [
@@ -47,7 +53,28 @@ const COLOR_ALIASES: Array<[RegExp, string]> = [
   [/黄色?|黄的|yellow/i, 'yellow'],
   [/黑色?|黑的|black/i, 'black'],
   [/白色?|白的|white/i, 'white'],
+  [/橙色?|橙的|orange/i, 'orange'],
+  [/金色|gold/i, 'gold'],
+  [/银色|silver/i, 'silver'],
+  [/灰色?|grey|gray/i, 'gray'],
 ];
+
+/** Offline language normalization, never a list of executable scene assets.
+ * Preserve unfamiliar labels/qualifiers for the semantic model rather than
+ * silently replacing them with the nearest known category.
+ */
+export function visualLabel(label: string): string {
+  for (const [pattern, category] of CATEGORY_ALIASES) {
+    if (!pattern.test(label)) continue;
+    const rest = label.replace(pattern, '').trim();
+    if (!rest) return category;
+    for (const [colorPattern, color] of COLOR_ALIASES) {
+      if (colorPattern.test(rest) && !rest.replace(colorPattern, '').trim())
+        return `${color} ${category}`;
+    }
+  }
+  return label;
+}
 
 const CHINESE_NUMBERS: Record<string, number> = {
   一: 1,
@@ -83,7 +110,11 @@ function intentOf(text: string): RobotIntentName {
   if (isImmediateInterrupt(text)) return 'cancel';
   if (/状态|进度|在做什么|做到哪|还剩|执行效果|执行了吗|动了吗/.test(text))
     return 'status_query';
-  if (process.env.BUSAGENT_ROBOT === 'franka_panda' && /放下|放开手里的|把它放|把手里.*放|put\s+(it\s+)?down/i.test(text) && !/拿起|抓起|抓取|取出/.test(text))
+  if (
+    process.env.BUSAGENT_ROBOT === 'franka_panda' &&
+    /放下|放开手里的|把它放|把手里.*放|put\s+(it\s+)?down/i.test(text) &&
+    !/拿起|抓起|抓取|取出/.test(text)
+  )
     return 'place_held';
   if (/放到|放入|放进|摆到|放好|放在|放回|放下/.test(text)) return 'pick_place';
   if (/抓取|抓住|拿起|取出|递给|给我拿/.test(text)) return 'pick';
@@ -142,15 +173,19 @@ function targetOf(text: string): TargetSpec {
 
 function destinationOf(text: string): DestinationSpec | null {
   if (process.env.BUSAGENT_ROBOT === 'franka_panda') {
-    const label = /(?:放到|放入|放进|摆到|放在|放回)\s*(.+?)[。！!]?$/u.exec(text)?.[1]?.trim();
+    const label = /(?:放到|放入|放进|摆到|放在|放回)\s*(.+?)[。！!]?$/u
+      .exec(text)?.[1]
+      ?.trim();
     const table = /桌子|桌面|工作台|台面|\btable\b|\bdesk\b|\bworkbench\b/i;
     if (table.test(label ?? '') || (!label && table.test(text) && /放/.test(text)))
       return { type: 'named_region', label: 'table', selection: 'free_space' };
     if (label)
       return {
         type: 'named_region',
-        label: label.replace(/(?:的)?(?:上面|上方|顶部|上)$/u, '').trim(),
-        ...(/随便|任意|空位|空闲|空处/.test(text) ? { selection: 'free_space' as const } : {}),
+        label: visualLabel(label.replace(/(?:的)?(?:上面|上方|顶部|上)$/u, '').trim()),
+        ...(/随便|任意|空位|空闲|空处/.test(text)
+          ? { selection: 'free_space' as const }
+          : {}),
       };
     if (/放下|put\s+(it\s+)?down/i.test(text))
       return { type: 'named_region', label: 'table', selection: 'free_space' };
@@ -189,22 +224,30 @@ export function parseInstruction(text: string): ParsedInstruction {
   )
     intent = 'unsupported';
   const target = targetOf(
-    ['pick_place', 'place_held'].includes(intent) ? source.split(/放到|放入|放进|摆到|放在|放回/u)[0]! : source,
+    ['pick_place', 'place_held'].includes(intent)
+      ? source.split(/放到|放入|放进|摆到|放在|放回/u)[0]!
+      : source,
   );
   const destination = destinationOf(source);
-  if (process.env.BUSAGENT_ROBOT === 'franka_panda' && intent === 'pick_place' && !target.category)
+  if (
+    process.env.BUSAGENT_ROBOT === 'franka_panda' &&
+    intent === 'pick_place' &&
+    !target.category
+  )
     intent = 'place_held';
   const clarification =
     motion?.clarification_question ??
     (intent === 'unsupported'
       ? '当前无法将这条要求转换为已支持的动作。请使用关节转动、末端平移、归位、夹爪开合或查询能力等具体指令。'
       : intent === 'place_held'
-        ? (destination ? null : '请说明放置到哪里。')
-      : intent === 'pick_place' &&
-          destination?.type === 'named_region' &&
-          target.category
-        ? null
-        : clarificationFor(intent, target));
+        ? destination
+          ? null
+          : '请说明放置到哪里。'
+        : intent === 'pick_place' &&
+            destination?.type === 'named_region' &&
+            target.category
+          ? null
+          : clarificationFor(intent, target));
   return {
     intent,
     target,
@@ -230,15 +273,28 @@ export function parseInstruction(text: string): ParsedInstruction {
 }
 
 /** Continue the measured grasp, never infer holding from a historical request. */
-export function routeHeldPlacement(parsed: ParsedInstruction, live: Record<string, unknown>): ParsedInstruction {
+export function routeHeldPlacement(
+  parsed: ParsedInstruction,
+  live: Record<string, unknown>,
+): ParsedInstruction {
   const holding = live.holding as { verified?: boolean; label?: string } | undefined;
-  if (holding?.verified !== true || parsed.intent !== 'pick_place' || !parsed.destination) return parsed;
+  if (
+    holding?.verified !== true ||
+    parsed.intent !== 'pick_place' ||
+    !parsed.destination
+  )
+    return parsed;
   const target = parsed.target.category?.toLowerCase();
   const held = holding.label?.toLowerCase() ?? '';
   const color = parsed.target.attributes.color?.toLowerCase();
   if (color && !held.split(/\s+/).includes(color)) return parsed;
   if (!target || held === target || held.split(/\s+/).includes(target))
-    return { ...parsed, intent: 'place_held', needs_clarification: false, clarification_question: null };
+    return {
+      ...parsed,
+      intent: 'place_held',
+      needs_clarification: false,
+      clarification_question: null,
+    };
   return parsed;
 }
 
@@ -300,7 +356,10 @@ export class InstructionUnderstandingNode implements InProcessAgent, OnModuleIni
     this.pending.delete(context.event.correlationId);
     let liveState: Record<string, unknown> = {};
     if (process.env.BUSAGENT_ROBOT === 'franka_panda' && parsed.intent !== 'cancel') {
-      liveState = await readInteractionSnapshot(context.agentConfig.config, AbortSignal.timeout(500));
+      liveState = await readInteractionSnapshot(
+        context.agentConfig.config,
+        AbortSignal.timeout(500),
+      );
       parsed = routeHeldPlacement(parsed, liveState);
     }
     if (
@@ -313,7 +372,10 @@ export class InstructionUnderstandingNode implements InProcessAgent, OnModuleIni
       const remembered = this.history.get(context.event.correlationId);
       try {
         if (process.env.BUSAGENT_ROBOT !== 'franka_panda')
-          liveState = await readInteractionSnapshot(context.agentConfig.config, AbortSignal.timeout(500));
+          liveState = await readInteractionSnapshot(
+            context.agentConfig.config,
+            AbortSignal.timeout(500),
+          );
         parsed = await understandSemantic(
           this.host,
           text,

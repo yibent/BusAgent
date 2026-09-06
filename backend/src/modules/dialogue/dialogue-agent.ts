@@ -101,14 +101,18 @@ function payloadText(payload: unknown): string {
 
 function arenaEvaluationReply(payload: unknown): string | null {
   const result = (
-    payload as { result?: { evaluation?: Record<string, unknown> } } | null
+    payload as {
+      result?: { skill?: string; evaluation?: Record<string, unknown> };
+    } | null
   )?.result;
   const evaluation = result?.evaluation;
   if (evaluation?.evaluation_source !== 'arena_task_simulation_ground_truth')
     return null;
   if (evaluation.physical_success === true)
     return evaluation.released === true
-      ? '抓取与放置完成，物理验证通过。'
+      ? result?.skill === 'place_held'
+        ? '持物放置完成，物理验证通过。'
+        : '抓取与放置完成，物理验证通过。'
       : '物体已抬起，抓取验证通过。';
   if (evaluation.physical_success !== false) return null;
   if (evaluation.lifted === true && evaluation.released === true)

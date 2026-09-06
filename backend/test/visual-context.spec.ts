@@ -79,7 +79,6 @@ describe('visual evidence in text context', () => {
 
 import { readFileSync } from 'node:fs';
 import { buildPlan } from '../src/apps/desktop-robot/planner-agent.js';
-import type { ParsedInstruction } from '../src/apps/desktop-robot/instruction-types.js';
 import { semanticFrame } from '../src/apps/desktop-robot/semantic-understanding.js';
 
 it('observes the whole scene without asking for a target', () => {
@@ -162,10 +161,14 @@ it('routes Panda find requests to one parameterized Arena observation', () => {
     (a: { agent_id: string }) => a.agent_id === 'robot.task_planner',
   );
   expect(grounding.config.provider).toBe('semantic_passthrough');
-  const instruction = {
-    intent: 'find',
-    target: { category: 'block', attributes: { color: 'red' } },
-  } as ParsedInstruction;
+  const instruction = semanticFrame(
+    {
+      intent: 'find',
+      category: 'block',
+      color: 'red',
+    },
+    '找红色方块',
+  );
   const plan = buildPlan(
     instruction,
     'query',

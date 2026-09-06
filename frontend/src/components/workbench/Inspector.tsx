@@ -720,11 +720,11 @@ export function Inspector({
                         value={`${(result.evaluation.max_lift_m * 100).toFixed(1)} cm`}
                       />
                       <Property
-                        name="距区域中心"
+                        name={result.evaluation.selected_position_xy_error_m == null ? "距支撑中心" : "距所选空位"}
                         value={
-                          result.evaluation.destination_xy_error_m == null
+                          (result.evaluation.selected_position_xy_error_m ?? result.evaluation.destination_xy_error_m) == null
                             ? "—"
-                            : `${(result.evaluation.destination_xy_error_m * 1000).toFixed(1)} mm`
+                            : `${((result.evaluation.selected_position_xy_error_m ?? result.evaluation.destination_xy_error_m ?? 0) * 1000).toFixed(1)} mm`
                         }
                       />
                       <Property

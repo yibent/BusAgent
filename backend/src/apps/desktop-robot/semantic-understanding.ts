@@ -183,10 +183,18 @@ export function semanticFrame(raw: unknown, text: string): ParsedInstruction {
   if (f.intent === 'pick_place' || f.intent === 'place_held') {
     if (f.intent === 'pick_place' && (!f.category || !f.destination))
       instruction.clarification_question ||= '请说明要抓哪个物体，以及放到哪个区域。';
-    const destination = f.destination ?? (f.intent === 'place_held' ? 'table' : undefined);
+    const destination =
+      f.destination ?? (f.intent === 'place_held' ? 'table' : undefined);
     if (destination)
-      instruction.destination = { type: 'named_region', label: destination,
-        selection: f.placement_selection ?? (/^(table|desk|workbench|桌面|桌子|工作台)$/i.test(destination) ? 'free_space' : 'center') };
+      instruction.destination = {
+        type: 'named_region',
+        label: destination,
+        selection:
+          f.placement_selection ??
+          (/^(table|desk|workbench|桌面|桌子|工作台)$/i.test(destination)
+            ? 'free_space'
+            : 'center'),
+      };
   }
   if (['pick', 'pick_place', 'place_held'].includes(f.intent)) {
     instruction.manipulation = {
@@ -198,7 +206,7 @@ export function semanticFrame(raw: unknown, text: string): ParsedInstruction {
   }
   if (f.intent === 'unsupported')
     instruction.clarification_question ||=
-      '当前尚未接入搬运放置或这项复杂操作；可以单独下达抓取指令。';
+      '当前执行器尚不支持这项操作。';
   instruction.needs_clarification = Boolean(instruction.clarification_question);
   return instruction;
 }
@@ -208,7 +216,7 @@ const PANDA_PROMPT = `你是 BusAgent 的 Franka Panda 任务决策节点。只�
 询问画面、场景或桌面“有什么/看到什么/有哪些东西”，包括口语或转写错字，必须输出{"intent":"find","scope":"scene"}，不继承上一个目标，不归为chat，不询问要看哪个物体。询问某个具体物体是否可见则输出find、scope=target和category/color。
 你负责理解任务、确定抓哪个物体和放到哪个区域；GraspGenX生成抓取姿态，AnyPlace生成放置姿态，IsaacLab-Arena负责相机、IK、执行与评测。你不能生成物体坐标、6DoF姿态、关节角或猜测成功。
 字段：intent(pick/pick_place/place_held/find/track/home/cancel/status_query/capabilities/chat/unsupported), scope(scene/target，用于find), vision_mode(auto/fast/slow), scene_mode(inventory/describe), slow_provider(florence2/sam3), category, color, destination, placement_selection(center/free_space), mode(auto/basic/enhanced), unfamiliar, cluttered, precise, question。
-category和color采用英文常见物体名；destination是用户指定区域的短标签，例如 blue pad。不要混淆目标颜色与目的地区域颜色。
+category、color和destination均采用简短英文视觉提示，destination例如blue tray、yellow cylinder。不要把未翻译的中文标签发送给视觉模型，不要混淆目标颜色与目的地区域颜色。
 另一个物体也可以作为destination，例如把红色方块放到黄色柱子上，destination=yellow cylinder。场景资产的objects/destinations分类不限制放置目标；不要因目标不在旧的蓝垫列表中拒绝任务。普通顶面堆放可用mode=auto，能否稳定支撑由Arena执行与评测判断。
 拿起单个物体为pick；抓起并放到指定区域是一次完整pick_place事务；question仅用于目标或目的地确实无法确定的情况。
 独立放下已持物体用place_held，不要求再次指定category，不重新抓取。当前实测control_context.live_state.holding.verified为true时，继续放置手中物体（包括再次点名它）用place_held；home只归位并不释放。明确换成另一物体时不得把它误当成手中物体。

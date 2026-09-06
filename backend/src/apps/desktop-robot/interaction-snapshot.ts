@@ -30,7 +30,9 @@ export function summarizeCapabilities(value: unknown): string {
   return (
     support +
     (!skills.has('grasp') ? '抓取未接入。' : '') +
-    (!skills.has('place') && !skills.has('pick_place') && !skills.has('place_held') ? '放置未实现。' : '')
+    (!skills.has('place') && !skills.has('pick_place') && !skills.has('place_held')
+      ? '放置未实现。'
+      : '')
   );
 }
 
@@ -130,11 +132,16 @@ export async function readInteractionSnapshot(
       available: true,
       observed_at: new Date().toISOString(),
       capability_summary: summarizeCapabilities(capabilities),
-      status_summary: status.robot === 'franka_panda'
-        ? `机械臂阶段：${String(status.phase)}。${holding.verified === true ? `当前持有${String(holding.label)}，可单独放置。` : '当前没有确认的持物。'}`
-        : summarizeMotion(motion, status.follow_enabled === true),
-      holding: { verified: holding.verified, label: holding.label,
-        instance_id: holding.instance_id, grasp_command_id: holding.grasp_command_id },
+      status_summary:
+        status.robot === 'franka_panda'
+          ? `机械臂阶段：${String(status.phase)}。${holding.verified === true ? `当前持有${String(holding.label)}，可单独放置。` : '当前没有确认的持物。'}`
+          : summarizeMotion(motion, status.follow_enabled === true),
+      holding: {
+        verified: holding.verified,
+        label: holding.label,
+        instance_id: holding.instance_id,
+        grasp_command_id: holding.grasp_command_id,
+      },
       supported_skills: capabilities.skills,
       unsupported_skills: capabilities.unsupported,
       grasp_capabilities: capabilities.grasp,

@@ -39,7 +39,7 @@ describe('nominal vision node', () => {
         task_version: 2,
       }),
     );
-    const emitted = publish.mock.calls[0][0];
+    const emitted = publish.mock.calls[0]![0];
     expect(emitted.payload).not.toHaveProperty('image');
     expect(emitted.payload).not.toHaveProperty('mask');
     expect(emitted.payload.result_ref).toBe('ref');
