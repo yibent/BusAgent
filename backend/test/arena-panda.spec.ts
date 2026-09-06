@@ -1,11 +1,35 @@
 import { describe, expect, it, vi } from 'vitest';
-import { parseInstruction } from '../src/apps/desktop-robot/instruction-agent.js';
+import { parseInstruction, routeHeldPlacement } from '../src/apps/desktop-robot/instruction-agent.js';
 import { semanticFrame } from '../src/apps/desktop-robot/semantic-understanding.js';
 import { buildPlan } from '../src/apps/desktop-robot/planner-agent.js';
 import { validatePlan } from '../src/apps/desktop-robot/plan-validator-node.js';
 import { summarizeCapabilities } from '../src/apps/desktop-robot/interaction-snapshot.js';
 
 describe('Arena Panda task decisions', () => {
+  it.each(['放下', '把它放到蓝色托盘', '在桌子上随便找个地方放下'])('plans an independent placement: %s', (text) => {
+    vi.stubEnv('BUSAGENT_ROBOT', 'franka_panda');
+    try {
+      const plan = buildPlan(parseInstruction(text), 'place')!;
+      expect(validatePlan(plan)).toEqual([]);
+      expect(plan.steps).toHaveLength(1);
+      expect(plan.steps[0]?.skill).toBe('place_held');
+      expect(plan.steps[0]?.params).not.toHaveProperty('target');
+    } finally { vi.unstubAllEnvs(); }
+  });
+  it('lets perception choose a free table patch without language coordinates', () => {
+    const plan = buildPlan(semanticFrame({intent:'place_held', destination:'table', placement_selection:'free_space'}, '在桌子上随便找个地方放下'), 'free')!;
+    expect(plan.steps[0]?.params.destination).toEqual({type:'named_region',label:'table',selection:'free_space'});
+    expect(validatePlan(plan)).toEqual([]);
+  });
+  it('uses measured holding to resume a named object without another grasp', () => {
+    const parsed = semanticFrame({intent:'pick_place',category:'gear',destination:'blue tray'}, '把齿轮放到蓝色托盘');
+    const held = {holding:{verified:true,label:'gear'}};
+    expect(buildPlan(routeHeldPlacement(parsed,held),'resume')?.steps[0]?.skill).toBe('place_held');
+    expect(routeHeldPlacement(parsed,{holding:{verified:false,label:'gear'}}).intent).toBe('pick_place');
+    expect(routeHeldPlacement(parsed,{holding:{verified:true,label:'bolt'}}).intent).toBe('pick_place');
+    const other = semanticFrame({intent:'pick_place',category:'block',color:'red',destination:'blue tray'}, '把红方块放到托盘');
+    expect(routeHeldPlacement(other,{holding:{verified:true,label:'green block'}}).intent).toBe('pick_place');
+  });
   it('keeps another object as the support target without a blue-pad whitelist', () => {
     const plan = buildPlan(
       semanticFrame(

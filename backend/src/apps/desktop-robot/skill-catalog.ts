@@ -15,6 +15,17 @@ export interface SkillDefinition {
  * these task-level contracts remain stable.
  */
 export const SKILL_CATALOG: Readonly<Record<string, SkillDefinition>> = {
+  place_held: {
+    name: 'place_held',
+    requiredParams: ['destination'],
+    preconditions: [],
+    postconditions: ['placement.verified'],
+    lane: 'arm-01',
+    interruptibility: 'step_boundary',
+    failureTypes: ['NOT_HOLDING', 'NO_CANDIDATE', 'NO_IK', 'DROPPED', 'TIMEOUT', 'BUSY'],
+    maxRetries: 0,
+    loopProfile: 'fine_place_loop',
+  },
   pick_place: {
     name: 'pick_place',
     requiredParams: ['target', 'destination'],

@@ -24,6 +24,7 @@ const frameSchema = z
       'cancel',
       'pick',
       'pick_place',
+      'place_held',
       'chat',
       'unsupported',
     ]),
@@ -50,6 +51,7 @@ const frameSchema = z
     retry_last_grasp: z.boolean().optional(),
     prepare_last_grasp: z.boolean().optional(),
     destination: z.string().min(1).max(256).optional(),
+    placement_selection: z.enum(['center', 'free_space']).optional(),
     mode: z.enum(['auto', 'basic', 'enhanced']).optional(),
     unfamiliar: z.boolean().optional(),
     cluttered: z.boolean().optional(),
@@ -178,13 +180,15 @@ export function semanticFrame(raw: unknown, text: string): ParsedInstruction {
     instruction.prepare_last_grasp = true;
   if (f.prepare_last_grasp && f.retry_last_grasp)
     instruction.clarification_question = '先回准备姿态还是重试抓取？请只确认一项。';
-  if (f.intent === 'pick_place') {
-    if (!f.category || !f.destination)
+  if (f.intent === 'pick_place' || f.intent === 'place_held') {
+    if (f.intent === 'pick_place' && (!f.category || !f.destination))
       instruction.clarification_question ||= '请说明要抓哪个物体，以及放到哪个区域。';
-    if (f.destination)
-      instruction.destination = { type: 'named_region', label: f.destination };
+    const destination = f.destination ?? (f.intent === 'place_held' ? 'table' : undefined);
+    if (destination)
+      instruction.destination = { type: 'named_region', label: destination,
+        selection: f.placement_selection ?? (/^(table|desk|workbench|桌面|桌子|工作台)$/i.test(destination) ? 'free_space' : 'center') };
   }
-  if (f.intent === 'pick' || f.intent === 'pick_place') {
+  if (['pick', 'pick_place', 'place_held'].includes(f.intent)) {
     instruction.manipulation = {
       mode: f.mode ?? 'auto',
       ...(f.unfamiliar === undefined ? {} : { unfamiliar: f.unfamiliar }),
@@ -203,10 +207,12 @@ const PANDA_PROMPT = `你是 BusAgent 的 Franka Panda 任务决策节点。只�
 视觉采用按任务选择的快慢环。find默认vision_mode=auto，由YOLOE/视觉记忆/光流先处理，低置信度或丢失才选慢环。明确要求只用快环可用vision_mode=fast；指定慢模型可用vision_mode=slow、slow_provider=florence2/sam3。SAM3负责概念检测与分割，Florence负责场景描述和通用定位；Qwen多模态仅规划。场景描述和一般物品清单用scene_mode=describe，明确要求快速检测清单用scene_mode=inventory。无需让所有任务串行经过所有模型。普通查询不要强制slow。要求持续观察、视觉跟踪某物体用intent=track，这只持续视觉跟踪，不驱动机械臂随动。
 询问画面、场景或桌面“有什么/看到什么/有哪些东西”，包括口语或转写错字，必须输出{"intent":"find","scope":"scene"}，不继承上一个目标，不归为chat，不询问要看哪个物体。询问某个具体物体是否可见则输出find、scope=target和category/color。
 你负责理解任务、确定抓哪个物体和放到哪个区域；GraspGenX生成抓取姿态，AnyPlace生成放置姿态，IsaacLab-Arena负责相机、IK、执行与评测。你不能生成物体坐标、6DoF姿态、关节角或猜测成功。
-字段：intent(pick/pick_place/find/track/home/cancel/status_query/capabilities/chat/unsupported), scope(scene/target，用于find), vision_mode(auto/fast/slow), scene_mode(inventory/describe), slow_provider(florence2/sam3), category, color, destination, mode(auto/basic/enhanced), unfamiliar, cluttered, precise, question。
+字段：intent(pick/pick_place/place_held/find/track/home/cancel/status_query/capabilities/chat/unsupported), scope(scene/target，用于find), vision_mode(auto/fast/slow), scene_mode(inventory/describe), slow_provider(florence2/sam3), category, color, destination, placement_selection(center/free_space), mode(auto/basic/enhanced), unfamiliar, cluttered, precise, question。
 category和color采用英文常见物体名；destination是用户指定区域的短标签，例如 blue pad。不要混淆目标颜色与目的地区域颜色。
 另一个物体也可以作为destination，例如把红色方块放到黄色柱子上，destination=yellow cylinder。场景资产的objects/destinations分类不限制放置目标；不要因目标不在旧的蓝垫列表中拒绝任务。普通顶面堆放可用mode=auto，能否稳定支撑由Arena执行与评测判断。
 拿起单个物体为pick；抓起并放到指定区域是一次完整pick_place事务；question仅用于目标或目的地确实无法确定的情况。
+独立放下已持物体用place_held，不要求再次指定category，不重新抓取。当前实测control_context.live_state.holding.verified为true时，继续放置手中物体（包括再次点名它）用place_held；home只归位并不释放。明确换成另一物体时不得把它误当成手中物体。
+“放下/把它放下/在桌子上随便找个地方放下”=>{"intent":"place_held","destination":"table","placement_selection":"free_space","mode":"auto"}。桌面普通放置默认free_space，由视觉选择足够的空闲支撑面；不要求用户给坐标或配置区域。指定托盘等目标时仍提取该目标，任意空位也用free_space。持物状态由Arena最终核验，不编造成功，不把放下改成打开夹爪或home。
 普通抓放mode=auto；用户明确指定模型增强或要求精确摆放时mode=enhanced；陌生物体、杂乱场景和精确摆放分别标记unfamiliar/cluttered/precise。不要声称这些模型已完成任务。
 停止或暂停为cancel，回到初始位置home，查看能力capabilities，查看进度status_query。当前只支持上述高层任务；直接控制关节和末端旋转为unsupported。
 历史仅用于消歧；闲聊和附和为chat，不能触发动作。执行能力和任务结果以control_context中的当前状态为准。

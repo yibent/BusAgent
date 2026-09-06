@@ -117,6 +117,16 @@ export function buildPlan(
         },
       ];
       break;
+    case 'place_held':
+      if (instruction.needs_clarification || instruction.destination?.type !== 'named_region')
+        return null;
+      steps = [{
+        id: 1,
+        skill: 'place_held',
+        params: { destination: instruction.destination, mode: 'auto', ...instruction.manipulation },
+        verify: 'Arena verifies retained holding, release and stable placement',
+      }];
+      break;
     case 'pick_place':
       if (
         instruction.needs_clarification ||

@@ -71,6 +71,8 @@ function completionMessage(plan: RobotPlan, results: ControlResult[]): string {
         : `已完成${target}抓取。`;
     case 'pick_place':
       return `已完成${target}抓取与放置。`;
+    case 'place_held':
+      return '已完成持物放置。';
     case 'chat':
       return '指令处理完成。';
   }
@@ -380,7 +382,7 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
       if (!first.commandId) throw new Error('控制器未返回命令编号，结果未知');
       const deadline =
         Date.now() +
-        (step.skill === 'pick_place'
+        (['pick_place', 'place_held'].includes(step.skill)
           ? 600_000
           : step.skill === 'grasp'
             ? 180_000

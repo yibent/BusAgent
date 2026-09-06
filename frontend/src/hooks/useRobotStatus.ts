@@ -54,6 +54,7 @@ export interface RobotRuntimeStatus {
   phase?: string;
   command_id?: string | null;
   held_object?: string | null;
+  holding?: { verified: boolean; label?: string; instance_id?: string; grasp_command_id?: string };
   last_result?: {
     skill?: string;
     ok: boolean;

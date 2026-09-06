@@ -20,6 +20,7 @@ export function summarizeCapabilities(value: unknown): string {
   if (skills.has('hold') || skills.has('stop')) groups.push('暂停');
   if (skills.has('grasp')) groups.push('单物体抓取与抬升验证');
   if (skills.has('pick_place')) groups.push('Panda抓取、放置与稳定性评测');
+  if (skills.has('place_held')) groups.push('持物独立放置、选择空闲桌面');
   const grasp = record(capabilities.grasp);
   if (skills.has('grasp') && grasp.dual_camera_default === true)
     groups.push('默认双相机辅助');
@@ -29,7 +30,7 @@ export function summarizeCapabilities(value: unknown): string {
   return (
     support +
     (!skills.has('grasp') ? '抓取未接入。' : '') +
-    (!skills.has('place') && !skills.has('pick_place') ? '放置未实现。' : '')
+    (!skills.has('place') && !skills.has('pick_place') && !skills.has('place_held') ? '放置未实现。' : '')
   );
 }
 
@@ -124,18 +125,23 @@ export async function readInteractionSnapshot(
     const motion = record(status.motion);
     const last = record(motion.last_command);
     const capabilities = record(status.capabilities);
+    const holding = record(status.holding);
     return {
       available: true,
       observed_at: new Date().toISOString(),
       capability_summary: summarizeCapabilities(capabilities),
-      status_summary: summarizeMotion(motion, status.follow_enabled === true),
+      status_summary: status.robot === 'franka_panda'
+        ? `机械臂阶段：${String(status.phase)}。${holding.verified === true ? `当前持有${String(holding.label)}，可单独放置。` : '当前没有确认的持物。'}`
+        : summarizeMotion(motion, status.follow_enabled === true),
+      holding: { verified: holding.verified, label: holding.label,
+        instance_id: holding.instance_id, grasp_command_id: holding.grasp_command_id },
       supported_skills: capabilities.skills,
       unsupported_skills: capabilities.unsupported,
       grasp_capabilities: capabilities.grasp,
       grasp_status: status.grasp,
       robot_state: {
-        mode: motion.mode,
-        active_command_id: motion.active_command_id,
+        mode: status.phase ?? motion.mode,
+        active_command_id: status.command_id ?? motion.active_command_id,
         simulation_playing: motion.simulation_playing,
         sampled_at: motion.sampled_at,
         joint_positions_deg: motion.joint_positions_deg,

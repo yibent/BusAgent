@@ -1,5 +1,6 @@
 export type RobotIntentName =
   | 'pick_place'
+  | 'place_held'
   | 'pick'
   | 'find'
   | 'track'
@@ -25,7 +26,7 @@ export interface BinCellDestination {
 }
 export type DestinationSpec =
   | BinCellDestination
-  | { type: 'named_region'; label: string };
+  | { type: 'named_region'; label: string; selection?: 'center' | 'free_space' };
 
 /** Structured language-understanding output described in report section 6.1. */
 export interface ParsedInstruction {
