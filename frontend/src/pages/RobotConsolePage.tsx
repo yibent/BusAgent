@@ -508,8 +508,9 @@ export function RobotConsolePage() {
                 </p>
                 <p>
                   最近动作：
-                  {robot.status.motion.last_command?.message ??
-                    "尚未下达"} ·{" "}
+                  {["perceive", "select_target"].includes(robot.status.motion.last_command?.skill ?? "") && robot.status.vision?.ok
+                    ? robot.status.vision.scope === "scene" ? "场景观测完成" : `目标观测完成：${robot.status.vision.label}`
+                    : robot.status.motion.last_command?.message ?? "尚未下达"} ·{" "}
                   {(
                     {
                       accepted: "已接收",

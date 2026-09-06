@@ -55,6 +55,7 @@ export interface RobotRuntimeStatus {
   command_id?: string | null;
   held_object?: string | null;
   last_result?: {
+    skill?: string;
     ok: boolean;
     state: string;
     message: string;

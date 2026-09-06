@@ -3,7 +3,7 @@ const stateNames: Record<string, string> = {accepted: "已接收", running: "执
 
 export function GraspPanel({status, connected}: {status: RobotRuntimeStatus | null; connected: boolean}) {
   status = status ?? {};
-  const result = status.last_result;
+  const result = ["grasp", "pick_place"].includes(status.last_result?.skill ?? "") ? status.last_result : undefined;
   const active = Boolean(status.command_id);
   const phases: Record<string, string> = {
     idle: "待命", planning: "观察目标", grasp_candidates: "生成抓取候选", selected_grasp: "选择抓取姿态",
