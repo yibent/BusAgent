@@ -18,6 +18,19 @@ export interface SceneObject {
 }
 export interface WorkspaceState {
   available: boolean;
+  api_version?: number;
+  controls?: {
+    robot_pose: boolean;
+    jog: boolean;
+    teleop: boolean;
+    gripper: boolean;
+  };
+  robot?: {
+    position: number[];
+    rotation: number[];
+    gripper: number;
+    joint_positions_deg: number[];
+  };
   scene_id: string;
   scenes: ScenePreset[];
   objects: SceneObject[];
@@ -57,6 +70,7 @@ export async function request<T>(
   path: string,
   body?: unknown,
   signal?: AbortSignal,
+  options: { allowFailedResult?: boolean } = {},
 ): Promise<T> {
   const response = await fetch(arenaUrl(path), {
     cache: "no-store",
@@ -76,7 +90,7 @@ export async function request<T>(
   } catch {
     throw new Error(`服务未提供此接口（${response.status}）`);
   }
-  if (!response.ok || data.ok === false)
+  if (!response.ok || (data.ok === false && !options.allowFailedResult))
     throw new Error(
       String(data.message ?? data.error ?? `请求失败（${response.status}）`),
     );
@@ -147,5 +161,27 @@ export async function editWorkspace(
   action: string,
   values: Record<string, unknown> = {},
 ) {
+  if (action === "reset" || action === "scene") {
+    const before = await request<{ command_id?: string | null }>("/api/status");
+    await runCommand("stop");
+    const deadline = Date.now() + 12000;
+    while (true) {
+      const status = await request<{ command_id?: string | null }>(
+        "/api/status",
+      );
+      const id = status.command_id ?? before.command_id;
+      if (!id) break;
+      const result = await request<{ state: string }>(
+        `/api/commands/${id}`,
+        undefined,
+        undefined,
+        { allowFailedResult: true },
+      );
+      if (!["accepted", "running"].includes(result.state)) break;
+      if (Date.now() > deadline)
+        throw new Error("机械臂仍在停止中，请稍后重试。");
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+  }
   return runCommand("workspace", { action, ...values });
 }

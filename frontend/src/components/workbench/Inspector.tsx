@@ -24,6 +24,8 @@ import { type TimelineClip, timecode, linkColor } from "@/lib/timeline";
 import type { WorkspaceState, SceneObject } from "@/lib/workspace-api";
 import type { RobotRuntimeStatus } from "@/hooks/useRobotStatus";
 import type { ConversationMessage } from "@/hooks/useConversation";
+import { MotionPad } from "./MotionPad";
+import { Logo } from "./Logo";
 export type InspectorTab = "node" | "objects" | "robot" | "conversation";
 function Property({ name, value }: { name: string; value: React.ReactNode }) {
   return (
@@ -103,14 +105,17 @@ function ObjectEditor({
   object: SceneObject;
   editable: boolean;
   busy: boolean;
-  onSave: (id: string, values: Record<string, unknown>) => Promise<void>;
+  onSave: (id: string, values: Record<string, unknown>) => Promise<boolean>;
 }) {
   const [position, setPosition] = useState(object.position ?? [0, 0, 0]);
   const [rotation, setRotation] = useState(object.rotation ?? [0, 0, 0]);
+  const [dirty, setDirty] = useState(false);
   useEffect(() => {
-    setPosition(object.position ?? [0, 0, 0]);
-    setRotation(object.rotation ?? [0, 0, 0]);
-  }, [object]);
+    if (!dirty) {
+      setPosition(object.position ?? [0, 0, 0]);
+      setRotation(object.rotation ?? [0, 0, 0]);
+    }
+  }, [object, dirty]);
   return (
     <>
       <div className="inspector-subhead">
@@ -123,7 +128,10 @@ function ObjectEditor({
           icon={Move3D}
           unit="m"
           value={position}
-          onChange={setPosition}
+          onChange={(value) => {
+            setPosition(value);
+            setDirty(true);
+          }}
           disabled={!editable}
         />
         <Vector
@@ -131,7 +139,10 @@ function ObjectEditor({
           icon={Rotate3D}
           unit="°"
           value={rotation}
-          onChange={setRotation}
+          onChange={(value) => {
+            setRotation(value);
+            setDirty(true);
+          }}
           disabled={!editable}
         />
         {object.size && (
@@ -165,11 +176,24 @@ function ObjectEditor({
           variant="secondary"
           className="full-button"
           disabled={!editable || busy}
-          onClick={() => void onSave(object.id, { position, rotation })}
+          onClick={async () => {
+            if (await onSave(object.id, { position, rotation }))
+              setDirty(false);
+          }}
         >
           <Check size={14} />
           应用位置与旋转
         </Button>
+        {dirty && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="full-button"
+            onClick={() => setDirty(false)}
+          >
+            读取当前位置
+          </Button>
+        )}
         {!editable && (
           <p className="field-help">
             服务当前提供物体信息；位置编辑等待仿真端接口更新。
@@ -186,19 +210,20 @@ function RobotSettings({
 }: {
   workspace: WorkspaceState | null;
   busy: boolean;
-  onSave: (config: Record<string, unknown>) => Promise<void>;
+  onSave: (config: Record<string, unknown>) => Promise<boolean>;
 }) {
   const cfg = workspace?.controller;
   const [position, setPosition] = useState(
     cfg ? cfg.position_tolerance_m * 1000 : 6,
   );
   const [rotation, setRotation] = useState(cfg?.rotation_tolerance_deg ?? 5);
+  const [dirty, setDirty] = useState(false);
   useEffect(() => {
-    if (cfg) {
+    if (cfg && !dirty) {
       setPosition(cfg.position_tolerance_m * 1000);
       setRotation(cfg.rotation_tolerance_deg);
     }
-  }, [cfg]);
+  }, [cfg, dirty]);
   return (
     <>
       <div className="inspector-subhead">
@@ -216,7 +241,10 @@ function RobotSettings({
               step=".1"
               value={position}
               disabled={!cfg}
-              onChange={(e) => setPosition(Number(e.target.value))}
+              onChange={(e) => {
+                setPosition(Number(e.target.value));
+                setDirty(true);
+              }}
             />
             mm
           </span>
@@ -231,7 +259,10 @@ function RobotSettings({
               step=".1"
               value={rotation}
               disabled={!cfg}
-              onChange={(e) => setRotation(Number(e.target.value))}
+              onChange={(e) => {
+                setRotation(Number(e.target.value));
+                setDirty(true);
+              }}
             />
             °
           </span>
@@ -241,16 +272,112 @@ function RobotSettings({
           size="sm"
           className="full-button"
           disabled={!cfg || busy}
-          onClick={() =>
-            void onSave({
-              position_tolerance_m: position / 1000,
-              rotation_tolerance_deg: rotation,
-            })
-          }
+          onClick={async () => {
+            if (
+              await onSave({
+                position_tolerance_m: position / 1000,
+                rotation_tolerance_deg: rotation,
+              })
+            )
+              setDirty(false);
+          }}
         >
           应用参数
         </Button>
         {!cfg && <p className="field-help">执行参数由当前仿真服务管理。</p>}
+      </div>
+    </>
+  );
+}
+function RobotEditor({
+  workspace,
+  busy,
+  onSave,
+  onGripper,
+}: {
+  workspace: WorkspaceState | null;
+  busy: boolean;
+  onSave: (values: Record<string, unknown>) => Promise<boolean>;
+  onGripper: (state: "open" | "close") => Promise<boolean>;
+}) {
+  const robot = workspace?.robot;
+  const [position, setPosition] = useState(robot?.position ?? [0, 0, 0]);
+  const [rotation, setRotation] = useState(robot?.rotation ?? [0, 0, 0]);
+  const [dirty, setDirty] = useState(false);
+  useEffect(() => {
+    if (robot && !dirty) {
+      setPosition(robot.position);
+      setRotation(robot.rotation);
+    }
+  }, [robot, dirty]);
+  const disabled = busy || !workspace?.controls?.robot_pose;
+  return (
+    <>
+      <div className="inspector-subhead">
+        <Move3D size={13} />
+        末端位姿<span>世界坐标</span>
+      </div>
+      <div className="property-group">
+        <Vector
+          title="末端位置"
+          icon={Move3D}
+          unit="m"
+          value={position}
+          disabled={disabled}
+          onChange={(v) => {
+            setPosition(v);
+            setDirty(true);
+          }}
+        />
+        <Vector
+          title="末端旋转"
+          icon={Rotate3D}
+          unit="°"
+          value={rotation}
+          disabled={disabled}
+          onChange={(v) => {
+            setRotation(v);
+            setDirty(true);
+          }}
+        />
+        <Button
+          className="full-button"
+          size="sm"
+          disabled={disabled}
+          onClick={async () => {
+            if (await onSave({ position, rotation })) setDirty(false);
+          }}
+        >
+          移动到此位姿
+        </Button>
+        {dirty && (
+          <Button
+            className="full-button"
+            variant="ghost"
+            size="sm"
+            onClick={() => setDirty(false)}
+          >
+            读取当前末端位姿
+          </Button>
+        )}
+        <div className="gripper-controls">
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={busy || !workspace?.controls?.gripper}
+            onClick={() => void onGripper("open")}
+          >
+            打开夹爪
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={busy || !workspace?.controls?.gripper}
+            onClick={() => void onGripper("close")}
+          >
+            闭合夹爪
+          </Button>
+        </div>
       </div>
     </>
   );
@@ -265,6 +392,9 @@ export function Inspector({
   busy,
   onObjectSave,
   onConfigSave,
+  onRefresh,
+  onRobotSave,
+  onGripper,
 }: {
   tab: InspectorTab;
   onTab: (tab: InspectorTab) => void;
@@ -273,8 +403,14 @@ export function Inspector({
   status: RobotRuntimeStatus | null;
   messages: ConversationMessage[];
   busy: boolean;
-  onObjectSave: (id: string, values: Record<string, unknown>) => Promise<void>;
-  onConfigSave: (values: Record<string, unknown>) => Promise<void>;
+  onObjectSave: (
+    id: string,
+    values: Record<string, unknown>,
+  ) => Promise<boolean>;
+  onConfigSave: (values: Record<string, unknown>) => Promise<boolean>;
+  onRefresh: () => Promise<void>;
+  onRobotSave: (values: Record<string, unknown>) => Promise<boolean>;
+  onGripper: (state: "open" | "close") => Promise<boolean>;
 }) {
   const [objectId, setObjectId] = useState<string | null>(null);
   const object =
@@ -482,6 +618,18 @@ export function Inspector({
               </div>
               <div className="inspector-section object-controls">
                 {object && (
+                  <MotionPad
+                    key={`motion-${object.id}`}
+                    target={{ target: "object", id: object.id }}
+                    disabled={
+                      busy ||
+                      !workspace.controls?.jog ||
+                      object.editable === false
+                    }
+                    onRefresh={onRefresh}
+                  />
+                )}
+                {object && (
                   <ObjectEditor
                     key={object.id}
                     object={object}
@@ -546,6 +694,17 @@ export function Inspector({
               </div>
             </div>
             <div className="inspector-section robot-controls">
+              <MotionPad
+                target={{ target: "robot" }}
+                disabled={busy || !workspace?.controls?.jog}
+                onRefresh={onRefresh}
+              />
+              <RobotEditor
+                workspace={workspace}
+                busy={busy}
+                onSave={onRobotSave}
+                onGripper={onGripper}
+              />
               <RobotSettings
                 workspace={workspace}
                 busy={busy}
@@ -565,6 +724,9 @@ export function Inspector({
                 <div key={m.id} className={`conversation-entry ${m.role}`}>
                   <div>
                     <strong>
+                      {m.role === "assistant" && (
+                        <Logo className="conversation-avatar" />
+                      )}
                       {m.role === "user"
                         ? "你"
                         : m.role === "notice"

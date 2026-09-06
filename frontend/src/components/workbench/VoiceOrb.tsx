@@ -3,6 +3,7 @@ import { ArrowUp, Keyboard, Loader2, Mic, MicOff, X } from "lucide-react";
 import type { useConversation } from "@/hooks/useConversation";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Logo } from "./Logo";
 export function VoiceOrb({
   conversation,
   disabled,
@@ -72,7 +73,7 @@ export function VoiceOrb({
             }}
             key={m.id}
           >
-            <span className="bubble-avatar">刘</span>
+            <Logo className="bubble-avatar" />
             <p>{m.text || "正在思考…"}</p>
           </div>
         ))}
@@ -151,7 +152,10 @@ export function VoiceOrb({
               <MicOff className="orb-stop" size={18} />
             </>
           ) : (
-            <Mic size={23} strokeWidth={1.6} />
+            <>
+              <Logo className="orb-logo" />
+              <Mic className="orb-mic-badge" size={13} strokeWidth={1.6} />
+            </>
           )}
         </span>
       </button>

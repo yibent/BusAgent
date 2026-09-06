@@ -21,6 +21,7 @@ import { CameraPreview } from "@/components/workbench/CameraPreview";
 import { Inspector, type InspectorTab } from "@/components/workbench/Inspector";
 import { Timeline } from "@/components/workbench/Timeline";
 import { VoiceOrb } from "@/components/workbench/VoiceOrb";
+import { Logo } from "@/components/workbench/Logo";
 import { editWorkspace, runCommand } from "@/lib/workspace-api";
 import type { TimelineClip } from "@/lib/timeline";
 import "@/workbench.css";
@@ -46,11 +47,13 @@ export function WorkbenchPage() {
         await action();
         setNotice({ text: message, error: false });
         await refresh();
+        return true;
       } catch (e) {
         setNotice({
           text: e instanceof Error ? e.message : "操作未完成",
           error: true,
         });
+        return false;
       } finally {
         setBusy(false);
       }
@@ -95,11 +98,7 @@ export function WorkbenchPage() {
             }}
             aria-label="刘工智能场景首页"
           >
-            <span className="brand-mark">
-              <i />
-              <i />
-              <i />
-            </span>
+            <Logo className="brand-logo" />
             <strong>刘工智能</strong>
             <span className="brand-edition">STUDIO</span>
           </a>
@@ -187,6 +186,19 @@ export function WorkbenchPage() {
                           perform(
                             () => editWorkspace("controller", values),
                             "机械臂执行参数已应用。",
+                          )
+                        }
+                        onRefresh={refresh}
+                        onRobotSave={(values) =>
+                          perform(
+                            () => editWorkspace("robot", values),
+                            "机械臂已移动到目标位姿",
+                          )
+                        }
+                        onGripper={(state) =>
+                          perform(
+                            () => editWorkspace("gripper", { state }),
+                            state === "open" ? "夹爪已打开" : "夹爪已闭合",
                           )
                         }
                       />
@@ -279,7 +291,10 @@ export function WorkbenchPage() {
         )}
         <Dialog open={help} onOpenChange={setHelp}>
           <DialogContent>
-            <DialogTitle>刘工智能工作台</DialogTitle>
+            <DialogTitle>
+              <Logo className="about-logo" />
+              刘工智能工作台
+            </DialogTitle>
             <DialogDescription>一个场景，从指令到执行。</DialogDescription>
             <div className="help-content">
               <p>
