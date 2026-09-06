@@ -39,6 +39,7 @@ export interface ParsedInstruction {
   needs_clarification: boolean;
   clarification_question: string | null;
   source_text: string;
+  observation_scope?: 'scene' | 'target';
   motion?: { skill: string; params: Record<string, unknown> };
   object_goal?: { offset_m: [number, number, number] };
   retry_last_grasp?: boolean;

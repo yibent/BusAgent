@@ -32,6 +32,8 @@ export class VisionNode implements InProcessAgent, OnModuleInit {
         command_id: payload.command_id,
         request_id: observation.request_id,
         label: observation.label,
+        scope: observation.scope,
+        observed_at: observation.observed_at,
         ok: observation.ok,
         elapsed_s: observation.elapsed_s,
         views: observation.views,

@@ -21,6 +21,7 @@ function asInstruction(payload: unknown): ParsedInstruction | null {
 
 function targetParams(instruction: ParsedInstruction): Record<string, unknown> {
   return {
+    ...(instruction.observation_scope ? { scope: instruction.observation_scope } : {}),
     category: instruction.target.category,
     attributes: instruction.target.attributes,
     spatial_ref: instruction.target.spatial_ref,

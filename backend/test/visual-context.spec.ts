@@ -1,5 +1,36 @@
-import { describe, expect, it } from 'vitest';
-import { summarizeVision } from '../src/apps/desktop-robot/interaction-snapshot.js';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  summarizeVision,
+  readInteractionSnapshot,
+} from '../src/apps/desktop-robot/interaction-snapshot.js';
+
+it('keeps previous perception answers out of the parallel acknowledgement context', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () =>
+      Response.json({
+        vision: { request_id: 'old', label: 'yellow block', ok: true },
+        motion: {
+          mode: 'hold',
+          last_command: {
+            skill: 'perceive',
+            state: 'completed',
+            message: 'yellow block seen',
+          },
+        },
+        capabilities: { skills: ['perceive'] },
+      }),
+    ),
+  );
+  try {
+    const snapshot = await readInteractionSnapshot({}, new AbortController().signal);
+    expect(snapshot.available).toBe(true);
+    expect(snapshot).not.toHaveProperty('visual_evidence');
+    expect(JSON.stringify(snapshot)).not.toContain('yellow block');
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
 
 describe('visual evidence in text context', () => {
   it('includes a detected target while excluding image and mask payloads', () => {
@@ -49,6 +80,58 @@ describe('visual evidence in text context', () => {
 import { readFileSync } from 'node:fs';
 import { buildPlan } from '../src/apps/desktop-robot/planner-agent.js';
 import type { ParsedInstruction } from '../src/apps/desktop-robot/instruction-types.js';
+import { semanticFrame } from '../src/apps/desktop-robot/semantic-understanding.js';
+
+it('observes the whole scene without asking for a target', () => {
+  const instruction = semanticFrame(
+    { intent: 'find', scope: 'scene' },
+    '现在场景里有什么？',
+  );
+  expect(instruction.needs_clarification).toBe(false);
+  expect(instruction.target.category).toBeNull();
+  const plan = buildPlan(instruction, 'scene-query', 1, true);
+  expect(plan?.steps).toHaveLength(1);
+  expect(plan?.steps[0]).toMatchObject({
+    skill: 'perceive',
+    params: { scope: 'scene', category: null },
+  });
+});
+
+it('summarizes fresh scene detections without leaking nested image data or candidate vocabulary', () => {
+  const summary = summarizeVision({
+    sequence: 30,
+    prompt: 'red block',
+    vision: {
+      scope: 'scene',
+      request_id: 'fresh-scene',
+      label: 'scene',
+      ok: true,
+      observed_at: 123,
+      queries: ['absent object'],
+      views: [
+        {
+          camera: 'side',
+          sequence: 29,
+          status: 'described',
+          objects: [
+            { label: 'yellow cylinder', mask: 'mask-bytes', image: 'image-bytes' },
+          ],
+          regions: [{ description: 'toy', rgb: 'rgb-bytes' }],
+        },
+      ],
+    },
+  });
+  expect(summary).toMatchObject({
+    source: 'last_scene_observation',
+    observed_at: 123,
+    detected_objects: ['yellow cylinder'],
+    region_descriptions: ['toy'],
+    exhaustive_inventory: false,
+  });
+  expect(JSON.stringify(summary)).not.toMatch(
+    /red block|absent object|mask-bytes|image-bytes|rgb-bytes/,
+  );
+});
 
 it('routes Panda find requests to one parameterized Arena observation', () => {
   const app = JSON.parse(

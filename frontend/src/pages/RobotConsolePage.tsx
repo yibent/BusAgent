@@ -450,9 +450,9 @@ export function RobotConsolePage() {
               <div>
                 <ActivityIcon />
                 <span>
-                  <small>感知状态</small>
+                  <small>最近一次观测</small>
                   <strong>
-                    {robot.status?.vision ? (robot.status?.vision.ok ? `已观测 ${robot.status?.vision.label}` : "观测失败") : detections > 0 ? `${detections} 个目标` : "等待目标"}
+                    {robot.status?.vision ? (robot.status?.vision.ok ? robot.status.vision.scope === "scene" ? "场景观测完成" : `已观测 ${robot.status.vision.label}` : "观测失败") : detections > 0 ? `${detections} 个目标` : "等待观测"}
                   </strong>
                 </span>
               </div>

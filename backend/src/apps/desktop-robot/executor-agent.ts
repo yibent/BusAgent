@@ -396,9 +396,13 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
           lastProgressAt = Date.now();
           await this.publishStatus(context, 'execution.started', {
             skill: step.skill,
+            params: step.params,
             step_id: step.id,
             command_id: first.commandId,
-            message: result.message,
+            message:
+              step.skill === 'perceive' && step.params.scope === 'scene'
+                ? '正在观察当前整个场景，尚未得到识别结果。'
+                : result.message,
           });
         }
         const detail = result.data as Record<string, unknown> | undefined;

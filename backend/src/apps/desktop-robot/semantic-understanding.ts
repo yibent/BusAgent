@@ -28,6 +28,7 @@ const frameSchema = z
       'unsupported',
     ]),
     category: z.string().nullable().optional(),
+    scope: z.enum(['scene', 'target']).optional(),
     color: z.string().nullable().optional(),
     selector: z.enum(['leftmost', 'rightmost']).nullable().optional(),
     joint: z
@@ -107,6 +108,7 @@ export function semanticFrame(raw: unknown, text: string): ParsedInstruction {
     needs_clarification: false,
     clarification_question: f.question || null,
     source_text: text,
+    ...(f.intent === 'find' ? { observation_scope: f.scope ?? 'target' } : {}),
   };
   const motion = (skill: string, params: Record<string, unknown>, missing = false) => {
     instruction.motion = { skill, params };
@@ -155,6 +157,7 @@ export function semanticFrame(raw: unknown, text: string): ParsedInstruction {
   if (
     ['find', 'track', 'pick'].includes(f.intent) &&
     !f.category &&
+    !(f.intent === 'find' && f.scope === 'scene') &&
     !(f.intent === 'pick' && (f.retry_last_grasp || f.prepare_last_grasp))
   )
     instruction.clarification_question ||= '请说明要查看或跟随哪个物体。';
@@ -185,8 +188,9 @@ export function semanticFrame(raw: unknown, text: string): ParsedInstruction {
 }
 
 const PANDA_PROMPT = `你是 BusAgent 的 Franka Panda 任务决策节点。只输出一个 JSON 对象，不输出执行结果。
+询问画面、场景或桌面“有什么/看到什么/有哪些东西”，包括口语或转写错字，必须输出{"intent":"find","scope":"scene"}，不继承上一个目标，不归为chat，不询问要看哪个物体。询问某个具体物体是否可见则输出find、scope=target和category/color。
 你负责理解任务、确定抓哪个物体和放到哪个区域；GraspGenX生成抓取姿态，AnyPlace生成放置姿态，IsaacLab-Arena负责相机、IK、执行与评测。你不能生成物体坐标、6DoF姿态、关节角或猜测成功。
-字段：intent(pick/pick_place/find/home/cancel/status_query/capabilities/chat/unsupported), category, color, destination, mode(auto/basic/enhanced), unfamiliar, cluttered, precise, question。
+字段：intent(pick/pick_place/find/home/cancel/status_query/capabilities/chat/unsupported), scope(scene/target，用于find), category, color, destination, mode(auto/basic/enhanced), unfamiliar, cluttered, precise, question。
 category和color采用英文常见物体名；destination是用户指定区域的短标签，例如 blue pad。不要混淆目标颜色与目的地区域颜色。
 拿起单个物体为pick；抓起并放到指定区域是一次完整pick_place事务；question仅用于目标或目的地确实无法确定的情况。
 普通抓放mode=auto；用户明确指定模型增强或要求精确摆放时mode=enhanced；陌生物体、杂乱场景和精确摆放分别标记unfamiliar/cluttered/precise。不要声称这些模型已完成任务。
@@ -220,8 +224,10 @@ export async function understandSemantic(
       {
         role: 'system',
         content:
-          process.env.BUSAGENT_ROBOT === 'franka_panda' ? PANDA_PROMPT : PROMPT +
-          '\n时序与因果：control_context中的实测状态和task_outcomes优先于历史指令。历史要求不代表仍在执行，取消、失败和完成都是已结束的任务。准备移动仅为回位，不是抓取；准备完成后“现在重新抓取红色方块/再次抓起来”是新的pick，应重新定位，不设retry_last_grasp或prepare_last_grasp。只有live_state.grasp_status.retry_available严格为true且用户明确恢复上次任务时才用retry_last_grasp；旧result中的标记不是当前可恢复证据。当前不可恢复时，明确的新抓取仍按普通pick；只有无法判断是否新开任务的“再试一次”才澄清。上下文可以用来解析物体指代，不得复用历史坐标或把旧的同意当成本轮授权。没有pending_preparation的“同意”不能套用历史准备问题。仅有“好，现在/嗯，接下来”等未说完的开场是chat，不得生成操作。',
+          process.env.BUSAGENT_ROBOT === 'franka_panda'
+            ? PANDA_PROMPT
+            : PROMPT +
+              '\n时序与因果：control_context中的实测状态和task_outcomes优先于历史指令。历史要求不代表仍在执行，取消、失败和完成都是已结束的任务。准备移动仅为回位，不是抓取；准备完成后“现在重新抓取红色方块/再次抓起来”是新的pick，应重新定位，不设retry_last_grasp或prepare_last_grasp。只有live_state.grasp_status.retry_available严格为true且用户明确恢复上次任务时才用retry_last_grasp；旧result中的标记不是当前可恢复证据。当前不可恢复时，明确的新抓取仍按普通pick；只有无法判断是否新开任务的“再试一次”才澄清。上下文可以用来解析物体指代，不得复用历史坐标或把旧的同意当成本轮授权。没有pending_preparation的“同意”不能套用历史准备问题。仅有“好，现在/嗯，接下来”等未说完的开场是chat，不得生成操作。',
       },
       {
         role: 'user',

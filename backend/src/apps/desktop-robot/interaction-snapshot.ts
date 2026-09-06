@@ -65,7 +65,11 @@ export function summarizeVision(
   const observation = record(status.vision);
   const views = Array.isArray(observation.views) ? observation.views.map(record) : [];
   return {
-    source: 'last_target_observation',
+    source:
+      observation.scope === 'scene'
+        ? 'last_scene_observation'
+        : 'last_target_observation',
+    observed_at: observation.observed_at,
     available: typeof observation.request_id === 'string',
     target: typeof observation.label === 'string' ? observation.label : undefined,
     result:
@@ -81,9 +85,25 @@ export function summarizeVision(
       sequence: view.sequence,
     })),
     current_sequence: status.sequence,
+    detected_objects: views.flatMap((view) =>
+      Array.isArray(view.objects)
+        ? view.objects
+            .map(record)
+            .map((object) => object.label)
+            .filter((label) => typeof label === 'string')
+        : [],
+    ),
+    region_descriptions: views.flatMap((view) =>
+      Array.isArray(view.regions)
+        ? view.regions
+            .map(record)
+            .map((region) => region.description)
+            .filter((label) => typeof label === 'string')
+        : [],
+    ),
     exhaustive_inventory: false,
     interpretation:
-      '这是最近一次指定目标的观测，不是实时全场景物体清单。无记录、失败或未提及某物体均不能证明它不存在。配置目录和放置目标不受支持的报错不是视觉证据；不得把历史回复当作当前检测结果。',
+      'source区分最近单目标观测与最近场景观测；均不是持续更新、保证穷尽的物体清单。未提及或未查询某物体不能证明它不存在。配置目录与放置目标报错不是视觉证据；不能用历史观测冒充本次新观测。',
   };
 }
 
@@ -113,7 +133,6 @@ export async function readInteractionSnapshot(
       unsupported_skills: capabilities.unsupported,
       grasp_capabilities: capabilities.grasp,
       grasp_status: status.grasp,
-      visual_evidence: summarizeVision(status),
       robot_state: {
         mode: motion.mode,
         active_command_id: motion.active_command_id,
@@ -121,7 +140,16 @@ export async function readInteractionSnapshot(
         sampled_at: motion.sampled_at,
         joint_positions_deg: motion.joint_positions_deg,
         can_resume: motion.can_resume,
-        last_command: { skill: last.skill, state: last.state, message: last.message },
+        // Visual answers arrive with the current command's completion event.
+        // The parallel acknowledgement lane must not see a previous inventory.
+        last_command: {
+          skill: last.skill,
+          state: last.state,
+          message:
+            last.skill === 'perceive' || last.skill === 'select_target'
+              ? '历史观测；本次画面需由新的观测事件确认。'
+              : last.message,
+        },
       },
       following: status.follow_enabled,
       error: status.error,
