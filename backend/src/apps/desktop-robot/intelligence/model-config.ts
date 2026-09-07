@@ -9,7 +9,7 @@ import type { Role } from './types.js';
 export const profileSchema = z.object({
   id: z.string().regex(/^[a-zA-Z0-9_-]+$/),
   name: z.string().min(1),
-  provider: z.enum(['gemini', 'qwen', 'glm', 'openai-compatible']),
+  provider: z.enum(['gemini', 'qwen', 'glm', 'deepseek', 'openai-compatible']),
   baseUrl: z.string().url(),
   model: z.string().min(1),
   apiKey: z.string().default(''),
@@ -32,8 +32,19 @@ const configSchema = z.object({
     .object({
       planner: z.array(z.string()).default([]),
       supervisor: z.array(z.string()).default([]),
+      dialogue: z.array(z.string()).optional(),
     })
     .default({}),
+  dialogueRouting: z
+    .object({
+      activeProfile: z.string(),
+      consecutiveFailures: z.number().int().min(0).max(3),
+      generation: z.number().int().min(0),
+      switchedAt: z.string().optional(),
+      reason: z.enum(['manual', 'consecutive_failures']).optional(),
+      exhausted: z.boolean().optional(),
+    })
+    .optional(),
   performance: z
     .object({
       lookahead: z.boolean().default(true),
@@ -49,6 +60,24 @@ const configSchema = z.object({
   recoveryBudget: z.number().int().min(1).max(20).default(3),
 });
 export type ModelSettings = z.infer<typeof configSchema>;
+export interface DialogueAttempt {
+  profile: ModelProfile;
+  generation: number;
+}
+type DialogueRouting = NonNullable<ModelSettings['dialogueRouting']>;
+const dialogueChain = (s: ModelSettings) => [
+  ...new Set(
+    [s.roles.dialogue, ...(s.fallbacks.dialogue ?? [])].filter((id): id is string =>
+      Boolean(id),
+    ),
+  ),
+];
+const dialogueState = (s: ModelSettings): DialogueRouting =>
+  s.dialogueRouting ?? {
+    activeProfile: s.roles.dialogue ?? '',
+    consecutiveFailures: 0,
+    generation: 0,
+  };
 export function completionsUrl(base: string): string {
   const url = new URL(base);
   url.pathname =
@@ -64,14 +93,15 @@ export class ModelConfig {
   );
   readonly tokenPath = resolve(dirname(this.path), 'admin-token');
   private cache: ModelSettings | undefined;
+  private writing: Promise<unknown> = Promise.resolve();
   constructor(private readonly host: HostConfig) {}
   async settings(): Promise<ModelSettings> {
     if (this.cache) return structuredClone(this.cache);
     try {
-      this.cache = configSchema.parse(JSON.parse(await readFile(this.path, 'utf8')));
+      this.cache ??= configSchema.parse(JSON.parse(await readFile(this.path, 'utf8')));
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-      this.cache = configSchema.parse({
+      this.cache ??= configSchema.parse({
         profiles: [
           {
             id: 'gemini-37-flash',
@@ -95,21 +125,36 @@ export class ModelConfig {
             reasoningEffort: 'low',
             thinking: true,
           },
-          {
-            id: 'qwen-plus',
-            name: 'Qwen Plus',
-            provider: 'qwen',
+          ...[
+            'qwen3.8-flash',
+            'qwen3.7-flash',
+            'qwen3.7-flash-2026-07-15',
+            'deepseek-v4-flash-0731',
+          ].map((model) => ({
+            id: model.replaceAll('.', '-'),
+            name: model,
+            provider: model.startsWith('qwen') ? 'qwen' : 'deepseek',
             baseUrl: process.env.QWEN_CHAT_URL ?? this.host.qwenChatUrl,
-            model: process.env.BUSAGENT_PLANNER_MODEL ?? 'qwen3.7-plus',
+            model,
             apiKey: process.env.QWEN_CHAT_API_KEY ?? this.host.dashscopeApiKey ?? '',
-          },
+            vision: false,
+            thinking: false,
+          })),
         ],
         roles: {
           planner: 'gemini-37-flash',
           supervisor: 'gemini-37-flash',
-          dialogue: 'qwen-plus',
+          dialogue: 'qwen3-8-flash',
         },
-        fallbacks: { planner: ['gemini-38-flash'], supervisor: ['gemini-38-flash'] },
+        fallbacks: {
+          planner: ['gemini-38-flash'],
+          supervisor: ['gemini-38-flash'],
+          dialogue: [
+            'qwen3-7-flash',
+            'qwen3-7-flash-2026-07-15',
+            'deepseek-v4-flash-0731',
+          ],
+        },
       });
     }
     return structuredClone(this.cache);
@@ -118,6 +163,7 @@ export class ModelConfig {
     const settings = await this.settings();
     return {
       ...settings,
+      dialogueRouting: dialogueState(settings),
       profiles: settings.profiles.map(({ apiKey, ...p }) => ({
         ...p,
         configured: Boolean(apiKey),
@@ -152,16 +198,81 @@ export class ModelConfig {
         : [];
     });
   }
-  async dialogueProfiles(): Promise<ModelProfile[]> {
+  async dialogueAttempt(): Promise<DialogueAttempt> {
     const settings = await this.settings();
-    const selected = settings.profiles.find(
-      (p) => p.id === settings.roles.dialogue && p.enabled && p.apiKey,
+    const state = dialogueState(settings);
+    const profile = settings.profiles.find(
+      (p) => p.id === state.activeProfile && p.enabled && p.apiKey,
     );
-    if (settings.roles.dialogue) {
-      if (!selected) throw new Error('即时对话模型尚未配置，保留其独立配置。');
-      return [selected];
-    }
-    return this.profilesFor('planner');
+    if (!profile) throw new Error('即时回答渠道未配置，请在模型设置中选择默认渠道。');
+    return { profile, generation: state.generation };
+  }
+  async dialogueProfiles(): Promise<ModelProfile[]> {
+    return [(await this.dialogueAttempt()).profile];
+  }
+
+  /** Serialize settings edits and concurrent model outcomes in this single host. */
+  private mutate<T>(work: () => Promise<T>): Promise<T> {
+    const next = this.writing.then(work);
+    this.writing = next.catch(() => undefined);
+    return next;
+  }
+  private async persist(settings: ModelSettings) {
+    await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
+    const temporary = `${this.path}.${randomBytes(6).toString('hex')}.tmp`;
+    await writeFile(temporary, JSON.stringify(settings, null, 2), { mode: 0o600 });
+    await rename(temporary, this.path);
+    this.cache = settings;
+  }
+
+  /** No retry here: the next request uses the persisted channel after three failures. */
+  async recordDialogueResult(
+    attempt: DialogueAttempt,
+    success: boolean,
+    cancelled?: AbortSignal,
+  ) {
+    return this.mutate(async () => {
+      const settings = await this.settings();
+      const state = dialogueState(settings);
+      if (
+        cancelled?.aborted ||
+        state.generation !== attempt.generation ||
+        state.activeProfile !== attempt.profile.id
+      )
+        return state;
+      const failures = success ? 0 : Math.min(3, state.consecutiveFailures + 1);
+      let next: DialogueRouting = {
+        ...state,
+        consecutiveFailures: failures,
+        exhausted: false,
+      };
+      if (failures >= 3) {
+        const chain = dialogueChain(settings);
+        const index = chain.indexOf(state.activeProfile);
+        const candidate = index >= 0 ? chain[index + 1] : undefined;
+        const enabled = settings.profiles.find(
+          (p) => p.id === candidate && p.enabled && p.apiKey,
+        );
+        next = enabled
+          ? {
+              activeProfile: enabled.id,
+              consecutiveFailures: 0,
+              generation: state.generation + 1,
+              switchedAt: new Date().toISOString(),
+              reason: 'consecutive_failures',
+              exhausted: false,
+            }
+          : { ...next, exhausted: true };
+      }
+      if (
+        JSON.stringify(next) !==
+        JSON.stringify({ ...state, exhausted: state.exhausted ?? false })
+      ) {
+        settings.dialogueRouting = next;
+        await this.persist(settings);
+      }
+      return next;
+    });
   }
   async authorize(token: unknown): Promise<void> {
     await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
@@ -178,27 +289,59 @@ export class ModelConfig {
     if (expected.length !== provided.length || !timingSafeEqual(expected, provided))
       throw new Error('模型设置需要服务器管理令牌。');
   }
-  async save(input: unknown, token: unknown) {
+  async save(input: unknown, token: unknown, resetDialogue = false) {
     await this.authorize(token);
-    const next = configSchema.parse(input);
-    const previous = await this.settings();
-    if (new Set(next.profiles.map((p) => p.id)).size !== next.profiles.length)
-      throw new Error('模型配置 ID 不能重复。');
-    for (const p of next.profiles) {
-      const url = new URL(p.baseUrl);
-      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password)
-        throw new Error('模型地址必须是 HTTP(S) 服务地址。');
-      if (!p.apiKey)
-        p.apiKey = previous.profiles.find((old) => old.id === p.id)?.apiKey ?? '';
-    }
-    for (const id of Object.values(next.roles)) {
-      if (!next.profiles.some((p) => p.id === id && p.enabled && p.apiKey))
-        throw new Error('规划和监督角色必须选择已配置并启用的模型。');
-    }
-    const temporary = `${this.path}.${randomBytes(6).toString('hex')}.tmp`;
-    await writeFile(temporary, JSON.stringify(next, null, 2), { mode: 0o600 });
-    await rename(temporary, this.path);
-    this.cache = next;
-    return this.publicSettings();
+    return this.mutate(async () => {
+      const next = configSchema.parse(input);
+      const previous = await this.settings();
+      if (new Set(next.profiles.map((p) => p.id)).size !== next.profiles.length)
+        throw new Error('模型配置 ID 不能重复。');
+      for (const p of next.profiles) {
+        const url = new URL(p.baseUrl);
+        if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password)
+          throw new Error('模型地址必须是 HTTP(S) 服务地址。');
+        if (!p.apiKey)
+          p.apiKey = previous.profiles.find((old) => old.id === p.id)?.apiKey ?? '';
+      }
+      for (const id of Object.values(next.roles)) {
+        if (!next.profiles.some((p) => p.id === id && p.enabled && p.apiKey))
+          throw new Error('规划和监督角色必须选择已配置并启用的模型。');
+      }
+      const chain = dialogueChain(next);
+      if (
+        (next.fallbacks.dialogue ?? []).length !==
+          new Set(next.fallbacks.dialogue ?? []).size ||
+        (next.fallbacks.dialogue ?? []).includes(next.roles.dialogue ?? '')
+      )
+        throw new Error('即时回答的默认渠道与备选渠道不能重复。');
+      for (const id of chain) {
+        if (!next.profiles.some((p) => p.id === id && p.enabled && p.apiKey))
+          throw new Error('即时回答备选渠道必须已启用并配置密钥。');
+      }
+      const previousState = dialogueState(previous);
+      const defaultChanged = next.roles.dialogue !== previous.roles.dialogue;
+      const active =
+        resetDialogue || defaultChanged || !chain.includes(previousState.activeProfile)
+          ? (next.roles.dialogue ?? '')
+          : previousState.activeProfile;
+      const signature = (s: ModelSettings) =>
+        JSON.stringify(
+          dialogueChain(s).map((id) => s.profiles.find((p) => p.id === id)),
+        );
+      // Runtime state is server-owned; a stale settings page cannot undo a switch.
+      next.dialogueRouting =
+        resetDialogue || defaultChanged || signature(next) !== signature(previous)
+          ? {
+              activeProfile: active,
+              consecutiveFailures: 0,
+              generation: previousState.generation + 1,
+              switchedAt: new Date().toISOString(),
+              reason: 'manual',
+              exhausted: false,
+            }
+          : previousState;
+      await this.persist(next);
+      return this.publicSettings();
+    });
   }
 }

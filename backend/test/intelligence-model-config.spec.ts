@@ -45,11 +45,11 @@ describe('private model profiles', () => {
     const settings = await models.publicSettings();
     await expect(models.save(settings, 'wrong')).rejects.toThrow('管理令牌');
     const token = await readFile(models.tokenPath, 'utf8');
-    settings.roles.dialogue = 'qwen-plus';
+    settings.roles.dialogue = 'qwen3-8-flash';
     await models.save(settings, token);
-    expect((await models.dialogueProfiles())[0]?.id).toBe('qwen-plus');
+    expect((await models.dialogueProfiles())[0]?.id).toBe('qwen3-8-flash');
     expect((await new ModelConfig({} as HostConfig).settings()).roles.dialogue).toBe(
-      'qwen-plus',
+      'qwen3-8-flash',
     );
   });
   it('isolates Gemini and GLM thinking parameters and does not log remote error bodies', async () => {
@@ -129,7 +129,9 @@ describe('private model profiles', () => {
       'gemini-38-flash',
       'gemini-37-flash',
     ]);
-    expect((await models.dialogueProfiles()).map((p) => p.id)).toEqual(['qwen-plus']);
+    expect((await models.dialogueProfiles()).map((p) => p.id)).toEqual([
+      'qwen3-8-flash',
+    ]);
     expect(completionsUrl('https://model.test/')).toBe(
       'https://model.test/v1/chat/completions',
     );
@@ -170,5 +172,24 @@ describe('private model profiles', () => {
       (request.mock.calls[1]![1] as RequestInit).body as string,
     ) as { messages: unknown[] };
     expect(sent.messages[0]).toEqual(message);
+  });
+  it('disables DeepSeek reasoning for immediate dialogue without using Qwen parameters', async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValue(
+        Response.json({
+          choices: [{ message: { role: 'assistant', content: '你好' } }],
+        }),
+      );
+    vi.stubGlobal('fetch', request);
+    const profile = (await models.settings()).profiles.find(
+      (p) => p.provider === 'deepseek',
+    )!;
+    await complete(profile, [{ role: 'user', content: '你好' }], []);
+    const body = JSON.parse(
+      (request.mock.calls[0]![1] as RequestInit).body as string,
+    ) as Record<string, unknown>;
+    expect(body.thinking).toEqual({ type: 'disabled' });
+    expect(body).not.toHaveProperty('enable_thinking');
   });
 });

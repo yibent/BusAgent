@@ -1,6 +1,9 @@
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import type { InProcessEventContext } from '../../adapters/in-process/agent-classes.js';
-import { ModelConfig } from '../../apps/desktop-robot/intelligence/model-config.js';
+import {
+  ModelConfig,
+  type DialogueAttempt,
+} from '../../apps/desktop-robot/intelligence/model-config.js';
 import {
   complete,
   type Message,
@@ -136,31 +139,42 @@ export class IntelligentDialogue implements OnModuleDestroy {
       job.controller.signal,
       AbortSignal.timeout(isAck ? 3500 : 6500),
     ]);
+    let attempt: DialogueAttempt | undefined;
+    let responseModel = '';
+    let channelSwitchedTo = '';
     try {
-      const profiles = await this.models.dialogueProfiles();
-      for (const profile of profiles.slice(0, 2)) {
-        try {
-          markExecutionLoop('slow', profile.model);
-          const answer = await complete(
-            { ...profile, thinking: false, timeoutMs: isAck ? 2200 : 4500 },
-            messages,
-            [],
-            deadline,
-            { maxTokens: isAck ? 48 : 600 },
-          );
-          text =
-            typeof answer.message.content === 'string'
-              ? answer.message.content.trim()
-              : '';
-          if (text) break;
-        } catch (error) {
-          if (deadline.aborted) throw error;
-          this.logger.warn(`dialogue model fallback: ${String(error)}`);
-        }
-      }
+      attempt = await this.models.dialogueAttempt();
+      markExecutionLoop('slow', attempt.profile.model);
+      const answer = await complete(
+        { ...attempt.profile, thinking: false, timeoutMs: isAck ? 2200 : 4500 },
+        messages,
+        [],
+        deadline,
+        { maxTokens: isAck ? 48 : 600 },
+      );
+      text =
+        typeof answer.message.content === 'string' ? answer.message.content.trim() : '';
+      if (!text) throw new Error('对话模型返回空文本。');
+      responseModel = attempt.profile.model;
     } catch (error) {
       if (!job.controller.signal.aborted)
-        this.logger.warn(`dialogue deadline: ${String(error)}`);
+        this.logger.warn(`dialogue request failed: ${String(error)}`);
+    }
+    if (attempt) {
+      try {
+        const routing = await this.models.recordDialogueResult(
+          attempt,
+          Boolean(text),
+          job.controller.signal,
+        );
+        if (routing.activeProfile !== attempt.profile.id)
+          channelSwitchedTo = routing.activeProfile;
+      } catch (error) {
+        // Persistence failure must neither duplicate an API call nor discard a good reply.
+        this.logger.error(
+          `dialogue channel state could not be saved: ${String(error)}`,
+        );
+      }
     }
     if (!valid()) return;
     // Only outages use a small receipt fallback; factual output retains the original evidence.
@@ -200,6 +214,10 @@ export class IntelligentDialogue implements OnModuleDestroy {
         instruction_id: job.instruction,
         source_event: e.eventType,
         response_ms: Date.now() - started,
+        model: responseModel || null,
+        profile: attempt?.profile.id ?? null,
+        model_failed: Boolean(attempt && !responseModel),
+        ...(channelSwitchedTo ? { channel_switched_to: channelSwitchedTo } : {}),
       },
     });
     if (this.pending.get(e.correlationId) === job) this.pending.delete(e.correlationId);

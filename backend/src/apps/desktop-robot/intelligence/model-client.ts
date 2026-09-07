@@ -57,6 +57,9 @@ export async function complete(
       ...(tools.length
         ? { tools, tool_choice: 'auto', parallel_tool_calls: false }
         : {}),
+      ...(profile.provider === 'deepseek'
+        ? { thinking: { type: profile.thinking ? 'enabled' : 'disabled' } }
+        : {}),
       ...(profile.provider === 'qwen' ? { enable_thinking: profile.thinking } : {}),
       ...(profile.provider === 'gemini'
         ? {

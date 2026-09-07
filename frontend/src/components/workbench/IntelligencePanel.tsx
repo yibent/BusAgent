@@ -27,7 +27,12 @@ type Settings = {
   images: boolean;
   supervisorEnabled: boolean;
   recoveryBudget: number;
-  fallbacks: { planner: string[]; supervisor: string[] };
+  fallbacks: { planner: string[]; supervisor: string[]; dialogue?: string[] };
+  dialogueRouting?: {
+    activeProfile: string;
+    consecutiveFailures: number;
+    exhausted?: boolean;
+  };
   performance: {
     lookahead: boolean;
     requestTimeoutMs: number;
@@ -117,7 +122,18 @@ export function IntelligencePanel({
       void api<Settings>("/v1/model-config")
         .then(setSettings)
         .catch((e) => setNotice(e.message));
-      return;
+      const timer = setInterval(() => {
+        void api<Settings>("/v1/model-config")
+          .then((current) =>
+            setSettings((draft) =>
+              draft
+                ? { ...draft, dialogueRouting: current.dialogueRouting }
+                : current,
+            ),
+          )
+          .catch(() => {});
+      }, 2500);
+      return () => clearInterval(timer);
     }
     void refresh();
     const timer = setInterval(() => {
@@ -311,7 +327,7 @@ export function IntelligencePanel({
                         ? "任务规划模型"
                         : role === "supervisor"
                           ? "任务监督模型"
-                          : "即时回答模型"}
+                          : "即时回答默认渠道"}
                       <select
                         value={settings.roles[role] ?? settings.roles.planner}
                         onChange={(e) =>
@@ -340,7 +356,14 @@ export function IntelligencePanel({
                                       .map((p) => p.id),
                                   },
                                 }
-                              : {}),
+                              : {
+                                  fallbacks: {
+                                    ...settings.fallbacks,
+                                    dialogue: (
+                                      settings.fallbacks.dialogue ?? []
+                                    ).filter((id) => id !== e.target.value),
+                                  },
+                                }),
                           })
                         }
                       >
@@ -354,6 +377,152 @@ export function IntelligencePanel({
                   ),
                 )}
               </div>
+              <fieldset>
+                <legend>即时回答渠道切换</legend>
+                <p>
+                  当前使用：
+                  {settings.profiles.find(
+                    (p) => p.id === settings.dialogueRouting?.activeProfile,
+                  )?.name ??
+                    settings.dialogueRouting?.activeProfile ??
+                    settings.roles.dialogue}{" "}
+                  · 连续失败{" "}
+                  {settings.dialogueRouting?.consecutiveFailures ?? 0}/3
+                </p>
+                <p>
+                  成功一次清零；连续 3
+                  次请求失败后，后续请求固定使用下一个备选。重启保持，不自动回到默认渠道。用户打断和语音合成失败不计入。
+                </p>
+                {settings.dialogueRouting?.exhausted && (
+                  <p role="status">
+                    已到最后一个渠道，请修改渠道或切回默认渠道。
+                  </p>
+                )}
+                {(settings.fallbacks.dialogue ?? []).map((id, index, ids) => (
+                  <div className="intelligence-toolbar" key={index}>
+                    <label>
+                      备选 {index + 1}
+                      <select
+                        aria-label={`即时回答备选 ${index + 1}`}
+                        value={id}
+                        onChange={(e) =>
+                          setSettings({
+                            ...settings,
+                            fallbacks: {
+                              ...settings.fallbacks,
+                              dialogue: ids.map((old, i) =>
+                                i === index ? e.target.value : old,
+                              ),
+                            },
+                          })
+                        }
+                      >
+                        {settings.profiles
+                          .filter(
+                            (p) =>
+                              p.id === id ||
+                              (p.enabled &&
+                                (p.configured || p.apiKey?.trim()) &&
+                                p.id !== settings.roles.dialogue &&
+                                !ids.includes(p.id)),
+                          )
+                          .map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={index === 0}
+                      onClick={() => {
+                        const next = [...ids];
+                        [next[index - 1], next[index]] = [
+                          next[index],
+                          next[index - 1],
+                        ];
+                        setSettings({
+                          ...settings,
+                          fallbacks: { ...settings.fallbacks, dialogue: next },
+                        });
+                      }}
+                    >
+                      上移
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() =>
+                        setSettings({
+                          ...settings,
+                          fallbacks: {
+                            ...settings.fallbacks,
+                            dialogue: ids.filter((_, i) => i !== index),
+                          },
+                        })
+                      }
+                    >
+                      移除
+                    </Button>
+                  </div>
+                ))}
+                <div className="intelligence-toolbar">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={
+                      !settings.profiles.some(
+                        (p) =>
+                          p.enabled &&
+                          (p.configured || p.apiKey?.trim()) &&
+                          p.id !== settings.roles.dialogue &&
+                          !(settings.fallbacks.dialogue ?? []).includes(p.id),
+                      )
+                    }
+                    onClick={() => {
+                      const next = settings.profiles.find(
+                        (p) =>
+                          p.enabled &&
+                          (p.configured || p.apiKey?.trim()) &&
+                          p.id !== settings.roles.dialogue &&
+                          !(settings.fallbacks.dialogue ?? []).includes(p.id),
+                      );
+                      if (next)
+                        setSettings({
+                          ...settings,
+                          fallbacks: {
+                            ...settings.fallbacks,
+                            dialogue: [
+                              ...(settings.fallbacks.dialogue ?? []),
+                              next.id,
+                            ],
+                          },
+                        });
+                    }}
+                  >
+                    添加备选渠道
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={busy || !token}
+                    onClick={() =>
+                      void run(async () => {
+                        setSettings(
+                          await api<Settings>("/v1/model-config", {
+                            settings,
+                            token,
+                            resetDialogue: true,
+                          }),
+                        );
+                      }, "已保存并切回默认渠道，失败计数已清零。")
+                    }
+                  >
+                    保存并切回默认渠道
+                  </Button>
+                </div>
+              </fieldset>
               <label className="check-label">
                 <input
                   type="checkbox"
@@ -540,6 +709,7 @@ export function IntelligencePanel({
                       <option value="gemini">Gemini（兼容接口）</option>
                       <option value="qwen">Qwen</option>
                       <option value="glm">智谱 GLM</option>
+                      <option value="deepseek">DeepSeek</option>
                       <option value="openai-compatible">OpenAI 兼容接口</option>
                     </select>
                   </label>

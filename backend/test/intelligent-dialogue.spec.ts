@@ -36,11 +36,15 @@ function fixture() {
     cancel: vi.fn(),
     interrupt: vi.fn(),
   };
+  const models = {
+    dialogueAttempt: vi
+      .fn()
+      .mockResolvedValue({ profile: { id: 'test', model: 'test' }, generation: 0 }),
+    recordDialogueResult: vi.fn().mockResolvedValue({ activeProfile: 'test' }),
+  };
   const agent = new IntelligentDialogue(
     memory as unknown as ContextMemory,
-    {
-      dialogueProfiles: async () => [{ id: 'test', model: 'test' }],
-    } as unknown as ModelConfig,
+    models as unknown as ModelConfig,
     hub,
     tts as unknown as TtsAgent,
   );
@@ -64,7 +68,7 @@ function fixture() {
         bus.push(input);
       },
     }) as unknown as InProcessEventContext;
-  return { agent, messages, bus, context, tts };
+  return { agent, messages, bus, context, tts, models };
 }
 afterEach(() => vi.restoreAllMocks());
 describe('parallel intelligent dialogue', () => {
@@ -151,6 +155,53 @@ describe('parallel intelligent dialogue', () => {
     await drain();
     expect(f.messages.find((m) => m.type === 'reply.final')?.text).toBe(
       '抓取失败，物体未拿起。',
+    );
+    f.agent.onModuleDestroy();
+  });
+  it('does not retry the same response even when the third failure switches the channel', async () => {
+    const f = fixture();
+    f.models.recordDialogueResult.mockResolvedValue({ activeProfile: 'next' });
+    const call = vi.spyOn(client, 'complete').mockRejectedValue(new Error('HTTP 503'));
+    f.agent.handle(
+      f.context('third-failure', 'intelligence.reply', { text: '查询暂未完成。' }),
+    );
+    await drain();
+    expect(call).toHaveBeenCalledTimes(1);
+    expect(f.models.recordDialogueResult).toHaveBeenCalledWith(
+      expect.anything(),
+      false,
+      expect.any(AbortSignal),
+    );
+    expect(f.bus[0]?.payload).toMatchObject({
+      model_failed: true,
+      channel_switched_to: 'next',
+    });
+    f.agent.onModuleDestroy();
+  });
+  it('counts an empty model reply as a failure', async () => {
+    const f = fixture();
+    vi.spyOn(client, 'complete').mockResolvedValue(answer('   '));
+    f.agent.handle(f.context('empty'));
+    await drain();
+    expect(f.models.recordDialogueResult).toHaveBeenCalledWith(
+      expect.anything(),
+      false,
+      expect.any(AbortSignal),
+    );
+    f.agent.onModuleDestroy();
+  });
+  it('does not turn a TTS failure into a model failure', async () => {
+    const f = fixture();
+    const call = vi.spyOn(client, 'complete').mockResolvedValue(answer('我看看。'));
+    f.tts.finishTurn.mockRejectedValueOnce(new Error('TTS offline'));
+    f.agent.handle(f.context('speech-failure'));
+    await drain();
+    expect(call).toHaveBeenCalledTimes(1);
+    expect(f.models.recordDialogueResult).toHaveBeenCalledTimes(1);
+    expect(f.models.recordDialogueResult).toHaveBeenCalledWith(
+      expect.anything(),
+      true,
+      expect.any(AbortSignal),
     );
     f.agent.onModuleDestroy();
   });

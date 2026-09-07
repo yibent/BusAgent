@@ -58,8 +58,12 @@ export function intelligenceRoutes(
   app.post(
     '/v1/model-config',
     route((request) => {
-      const body = request.body as { settings: unknown; token: unknown };
-      return models.save(body.settings, body.token);
+      const body = request.body as {
+        settings: unknown;
+        token: unknown;
+        resetDialogue?: boolean;
+      };
+      return models.save(body.settings, body.token, body.resetDialogue === true);
     }),
   );
   app.post(
