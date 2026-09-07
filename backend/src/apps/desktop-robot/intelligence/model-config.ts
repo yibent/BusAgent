@@ -9,13 +9,14 @@ import type { Role } from './types.js';
 export const profileSchema = z.object({
   id: z.string().regex(/^[a-zA-Z0-9_-]+$/),
   name: z.string().min(1),
-  provider: z.enum(['qwen', 'glm', 'openai-compatible']),
+  provider: z.enum(['gemini', 'qwen', 'glm', 'openai-compatible']),
   baseUrl: z.string().url(),
   model: z.string().min(1),
   apiKey: z.string().default(''),
   vision: z.boolean().default(true),
   thinking: z.boolean().default(false),
-  reasoningEffort: z.enum(['low', 'high', 'max']).optional(),
+  reasoningEffort: z.enum(['minimal', 'low', 'medium', 'high', 'max']).optional(),
+  peerGroup: z.string().min(1).optional(),
   enabled: z.boolean().default(true),
   timeoutMs: z.number().int().min(1000).max(120000).optional(),
 });
@@ -49,9 +50,11 @@ const configSchema = z.object({
 });
 export type ModelSettings = z.infer<typeof configSchema>;
 export function completionsUrl(base: string): string {
-  return (
-    base.replace(/\/+$/, '').replace(/\/chat\/completions$/, '') + '/chat/completions'
-  );
+  const url = new URL(base);
+  url.pathname =
+    url.pathname.replace(/\/+$/, '').replace(/\/chat\/completions$/, '') || '/v1';
+  url.pathname += '/chat/completions';
+  return url.toString();
 }
 
 @Injectable()
@@ -71,6 +74,28 @@ export class ModelConfig {
       this.cache = configSchema.parse({
         profiles: [
           {
+            id: 'gemini-37-flash',
+            name: 'Gemini 3.7 Flash',
+            provider: 'gemini',
+            baseUrl: process.env.GEMINI_PRIMARY_URL ?? 'https://api.gptnb.ai/v1',
+            model: 'gemini-3.7-flash',
+            apiKey: process.env.GEMINI_PRIMARY_API_KEY ?? '',
+            peerGroup: 'gemini-flash',
+            reasoningEffort: 'low',
+            thinking: true,
+          },
+          {
+            id: 'gemini-38-flash',
+            name: 'Gemini 3.8 Flash',
+            provider: 'gemini',
+            baseUrl: process.env.GEMINI_SECONDARY_URL ?? 'https://api.bltcy.ai/v1',
+            model: 'gemini-3.8-flash',
+            apiKey: process.env.GEMINI_SECONDARY_API_KEY ?? '',
+            peerGroup: 'gemini-flash',
+            reasoningEffort: 'low',
+            thinking: true,
+          },
+          {
             id: 'qwen-plus',
             name: 'Qwen Plus',
             provider: 'qwen',
@@ -78,28 +103,13 @@ export class ModelConfig {
             model: process.env.BUSAGENT_PLANNER_MODEL ?? 'qwen3.7-plus',
             apiKey: process.env.QWEN_CHAT_API_KEY ?? this.host.dashscopeApiKey ?? '',
           },
-          {
-            id: 'qwen-max',
-            name: 'Qwen Max',
-            provider: 'qwen',
-            baseUrl: process.env.QWEN_CHAT_URL ?? this.host.qwenChatUrl,
-            model: 'qwen3.8-max',
-            apiKey: process.env.QWEN_CHAT_API_KEY ?? this.host.dashscopeApiKey ?? '',
-            enabled: false,
-          },
-          {
-            id: 'glm-flash',
-            name: 'GLM 5.3 Flash',
-            provider: 'glm',
-            baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
-            model: 'glm-5.3-flash',
-            thinking: true,
-            reasoningEffort: 'low',
-            apiKey: process.env.GLM_API_KEY ?? '',
-            enabled: Boolean(process.env.GLM_API_KEY),
-          },
         ],
-        roles: { planner: 'qwen-plus', supervisor: 'qwen-plus' },
+        roles: {
+          planner: 'gemini-37-flash',
+          supervisor: 'gemini-37-flash',
+          dialogue: 'qwen-plus',
+        },
+        fallbacks: { planner: ['gemini-38-flash'], supervisor: ['gemini-38-flash'] },
       });
     }
     return structuredClone(this.cache);
@@ -126,7 +136,13 @@ export class ModelConfig {
   async profilesFor(role: Role): Promise<ModelProfile[]> {
     const settings = await this.settings();
     const primary = await this.profile(role);
-    const ids = [primary.id, ...settings.fallbacks[role]];
+    const ids = [
+      primary.id,
+      ...settings.fallbacks[role],
+      ...settings.profiles
+        .filter((p) => primary.peerGroup && p.peerGroup === primary.peerGroup)
+        .map((p) => p.id),
+    ];
     return [...new Set(ids)].flatMap((id) => {
       const p = settings.profiles.find(
         (row) => row.id === id && row.enabled && row.apiKey,
@@ -138,13 +154,14 @@ export class ModelConfig {
   }
   async dialogueProfiles(): Promise<ModelProfile[]> {
     const settings = await this.settings();
-    const fallback = await this.profilesFor('planner');
     const selected = settings.profiles.find(
       (p) => p.id === settings.roles.dialogue && p.enabled && p.apiKey,
     );
-    return selected
-      ? [selected, ...fallback.filter((p) => p.id !== selected.id)]
-      : fallback;
+    if (settings.roles.dialogue) {
+      if (!selected) throw new Error('即时对话模型尚未配置，保留其独立配置。');
+      return [selected];
+    }
+    return this.profilesFor('planner');
   }
   async authorize(token: unknown): Promise<void> {
     await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });

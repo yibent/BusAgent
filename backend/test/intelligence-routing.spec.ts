@@ -1,9 +1,14 @@
-import { describe, it, expect, vi } from 'vitest';
-import { routedCompletion } from '../src/apps/desktop-robot/intelligence/model-routing.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import {
+  routedCompletion,
+  clearModelCooldowns,
+} from '../src/apps/desktop-robot/intelligence/model-routing.js';
 import { independentAhead } from '../src/apps/desktop-robot/intelligence/lookahead.js';
 import type { ModelProfile } from '../src/apps/desktop-robot/intelligence/model-config.js';
 import type { Decision } from '../src/apps/desktop-robot/intelligence/types.js';
 
+beforeEach(() => clearModelCooldowns());
+afterEach(() => vi.restoreAllMocks());
 const primary: ModelProfile = {
   id: 'plus',
   name: 'plus',
@@ -154,4 +159,36 @@ describe('independent lookahead guard', () => {
       ),
     ).toBe(false);
   });
+});
+
+it('shares provider cooldown across requests and probes it again after expiry', async () => {
+  let now = 100000;
+  vi.spyOn(Date, 'now').mockImplementation(() => now);
+  const call = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('timeout'))
+    .mockResolvedValue(answer);
+  const record = vi.fn();
+  const request = () =>
+    routedCompletion(
+      [primary, backup],
+      [],
+      [],
+      new AbortController().signal,
+      record,
+      call,
+    );
+  await request();
+  await request();
+  expect(call.mock.calls.map((c) => (c[0] as ModelProfile).id)).toEqual([
+    'plus',
+    'max',
+    'max',
+  ]);
+  expect(record).toHaveBeenCalledWith(
+    expect.objectContaining({ kind: 'provider_cooldown', profile: 'plus' }),
+  );
+  now += 31000;
+  await request();
+  expect((call.mock.calls.at(-1)![0] as ModelProfile).id).toBe('plus');
 });

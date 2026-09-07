@@ -11,6 +11,7 @@ import { ConversationInterruptions } from '../src/modules/conversation/conversat
 import { HostConfig } from '../src/config/host-config.js';
 import type { TtsAgent } from '../src/modules/tts/tts-agent.js';
 import type { InProcessEventContext } from '../src/adapters/in-process/agent-classes.js';
+import type { ModelConfig } from '../src/apps/desktop-robot/intelligence/model-config.js';
 import { makeEvent } from './helpers.js';
 
 const snapshot = {
@@ -47,7 +48,21 @@ function setup(text: string) {
     tts as unknown as TtsAgent,
     new ConversationInterruptions(hub),
   );
-  const nlu = new InstructionUnderstandingNode(host);
+  const nlu = new InstructionUnderstandingNode({
+    profilesFor: () => [
+      {
+        id: 'gemini',
+        name: 'Gemini',
+        provider: 'gemini',
+        model: 'gemini-3.7-flash',
+        baseUrl: 'http://gemini.test/v1',
+        apiKey: 'test',
+        thinking: true,
+        vision: true,
+        enabled: true,
+      },
+    ],
+  } as unknown as ModelConfig);
   const messages: Array<Record<string, unknown>> = [];
   const events: Array<{ event_type: string; payload?: unknown }> = [];
   const id = `parallel-${Math.random()}`;
@@ -104,7 +119,19 @@ describe('parallel interaction lane', () => {
                     result: { retry_available: true },
                   },
                 })
-              : sse(JSON.stringify({ intent: 'pick', retry_last_grasp: true })),
+              : Response.json({
+                  choices: [
+                    {
+                      message: {
+                        role: 'assistant',
+                        content: JSON.stringify({
+                          intent: 'pick',
+                          retry_last_grasp: true,
+                        }),
+                      },
+                    },
+                  ],
+                }),
           ),
         ),
       );
@@ -149,8 +176,8 @@ describe('parallel interaction lane', () => {
           reasoning_effort?: string;
           messages: Array<{ content: string }>;
         };
-        if (body.model === 'qwen3.8-flash') {
-          expect(body.enable_thinking).toBe(true);
+        if (body.model === 'gemini-3.7-flash') {
+          expect(body.enable_thinking).toBeUndefined();
           expect(body.reasoning_effort).toBe('low');
           return new Promise<Response>((resolve) => {
             release = resolve;
@@ -169,7 +196,13 @@ describe('parallel interaction lane', () => {
       );
       expect(test.events.map((e) => e.event_type)).not.toContain('instruction.parsed');
       expect(test.tts.append).toHaveBeenCalled();
-      release(sse(JSON.stringify({ intent })));
+      release(
+        Response.json({
+          choices: [
+            { message: { role: 'assistant', content: JSON.stringify({ intent }) } },
+          ],
+        }),
+      );
       await vi.waitFor(() =>
         expect(
           test.events.some(
@@ -244,7 +277,7 @@ describe('parallel interaction lane', () => {
 
   it('suppresses a raw-input delivery arriving after its task result', async () => {
     const test = setup('机械臂复位');
-    const fetchMock = vi.fn(async () => sse('已完成。'));
+    const fetchMock = vi.fn(() => Promise.resolve(sse('已完成。')));
     vi.stubGlobal('fetch', fetchMock);
     await test.dialogue.handle({
       ...test.ctx,

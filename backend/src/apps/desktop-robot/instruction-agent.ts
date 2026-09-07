@@ -1,7 +1,7 @@
+import { ModelConfig } from './intelligence/model-config.js';
 import { intelligenceEnabled } from './intelligence/types.js';
 import { trackBackground } from '../../observability/execution-span.js';
 import { Injectable, OnModuleInit, Optional } from '@nestjs/common';
-import { HostConfig } from '../../config/host-config.js';
 import { understandSemantic } from './semantic-understanding.js';
 import { intentVersion, cancelPendingIntent } from './pending-intents.js';
 import { Logger } from '../../common/logger.js';
@@ -309,7 +309,7 @@ export class InstructionUnderstandingNode implements InProcessAgent, OnModuleIni
     { at: number; entries: ParsedInstruction[] }
   >();
 
-  constructor(@Optional() private readonly host?: HostConfig) {}
+  constructor(@Optional() private readonly models?: ModelConfig) {}
 
   onModuleInit(): void {
     if (!AgentClasses.has(this.registrationKey)) {
@@ -325,10 +325,7 @@ export class InstructionUnderstandingNode implements InProcessAgent, OnModuleIni
       clearPreparation(context.event.correlationId);
     }
     const version = intentVersion(context.event.correlationId);
-    if (
-      this.host?.dashscopeApiKey &&
-      !isImmediateInterrupt(textPayload(context.event.payload))
-    ) {
+    if (this.models && !isImmediateInterrupt(textPayload(context.event.payload))) {
       // Release the delivery lane while the language model works, so typed pause
       // is not queued behind a slow semantic request.
       void trackBackground(() => this.process(context, version)).catch(
@@ -365,7 +362,7 @@ export class InstructionUnderstandingNode implements InProcessAgent, OnModuleIni
       parsed = routeHeldPlacement(parsed, liveState);
     }
     if (
-      this.host?.dashscopeApiKey &&
+      this.models &&
       (parsed.intent !== 'cancel' ||
         (context.event.payload as { source?: string }).source === 'stt')
     ) {
@@ -379,16 +376,12 @@ export class InstructionUnderstandingNode implements InProcessAgent, OnModuleIni
             AbortSignal.timeout(500),
           );
         parsed = await understandSemantic(
-          this.host,
+          await this.models.profilesFor('planner'),
           text,
           remembered && Date.now() - remembered.at < MEMORY_TTL_MS
             ? remembered.entries
             : [],
           undefined,
-          typeof context.agentConfig.config.model === 'string'
-            ? context.agentConfig.config.model
-            : this.host.qwenChatModel,
-          context.agentConfig.config.reasoning === 'none' ? 'none' : 'low',
           preparationContext(context.event.correlationId),
           {
             live_state: liveState,

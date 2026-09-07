@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { HostConfig } from '../../config/host-config.js';
-import { streamQwenChat } from '../../modules/dialogue/qwen-chat.js';
+import type { ModelProfile } from './intelligence/model-config.js';
+import { routedCompletion } from './intelligence/model-routing.js';
 import type { ParsedInstruction } from './instruction-types.js';
 import type { PreparationContext } from './grasp-preparation-context.js';
 import { INSTRUCTION_MEMORY_LIMIT } from './control-history.js';
@@ -205,8 +205,7 @@ export function semanticFrame(raw: unknown, text: string): ParsedInstruction {
     };
   }
   if (f.intent === 'unsupported')
-    instruction.clarification_question ||=
-      '当前执行器尚不支持这项操作。';
+    instruction.clarification_question ||= '当前执行器尚不支持这项操作。';
   instruction.needs_clarification = Boolean(instruction.clarification_question);
   return instruction;
 }
@@ -229,46 +228,40 @@ category、color和destination均采用简短英文视觉提示，destination例
 当前状态和完成情况只能由执行事件判断，你只给出语义任务。`;
 
 export async function understandSemantic(
-  host: HostConfig,
+  profiles: ModelProfile[],
   text: string,
   history: ParsedInstruction[],
   signal?: AbortSignal,
-  model = host.qwenChatModel,
-  reasoning: 'none' | 'low' = 'low',
   pendingPreparation?: PreparationContext,
   controlContext?: Record<string, unknown>,
 ): Promise<ParsedInstruction> {
-  if (!host.dashscopeApiKey) throw new Error('语义模型未配置');
-  let raw = '';
-  for await (const chunk of streamQwenChat({
-    apiKey: host.dashscopeApiKey,
-    url: host.qwenChatUrl,
-    model,
-    reasoning,
-    temperature: 0,
-    jsonOutput: true,
-    signal: signal ?? AbortSignal.timeout(15_000),
-    messages: [
-      {
-        role: 'system',
-        content:
-          process.env.BUSAGENT_ROBOT === 'franka_panda'
-            ? PANDA_PROMPT
-            : PROMPT +
-              '\n时序与因果：control_context中的实测状态和task_outcomes优先于历史指令。历史要求不代表仍在执行，取消、失败和完成都是已结束的任务。准备移动仅为回位，不是抓取；准备完成后“现在重新抓取红色方块/再次抓起来”是新的pick，应重新定位，不设retry_last_grasp或prepare_last_grasp。只有live_state.grasp_status.retry_available严格为true且用户明确恢复上次任务时才用retry_last_grasp；旧result中的标记不是当前可恢复证据。当前不可恢复时，明确的新抓取仍按普通pick；只有无法判断是否新开任务的“再试一次”才澄清。上下文可以用来解析物体指代，不得复用历史坐标或把旧的同意当成本轮授权。没有pending_preparation的“同意”不能套用历史准备问题。仅有“好，现在/嗯，接下来”等未说完的开场是chat，不得生成操作。',
-      },
-      {
-        role: 'user',
-        content: JSON.stringify({
-          recent_instructions: history.slice(-INSTRUCTION_MEMORY_LIMIT),
-          current_utterance: text,
-          pending_preparation: pendingPreparation,
-          control_context: controlContext,
-        }),
-      },
-    ],
-  }))
-    raw += chunk;
+  const messages = [
+    {
+      role: 'system',
+      content:
+        process.env.BUSAGENT_ROBOT === 'franka_panda'
+          ? PANDA_PROMPT
+          : PROMPT +
+            '\n时序与因果：control_context中的实测状态和task_outcomes优先于历史指令。历史要求不代表仍在执行，取消、失败和完成都是已结束的任务。准备移动仅为回位，不是抓取；准备完成后“现在重新抓取红色方块/再次抓起来”是新的pick，应重新定位，不设retry_last_grasp或prepare_last_grasp。只有live_state.grasp_status.retry_available严格为true且用户明确恢复上次任务时才用retry_last_grasp；旧result中的标记不是当前可恢复证据。当前不可恢复时，明确的新抓取仍按普通pick；只有无法判断是否新开任务的“再试一次”才澄清。上下文可以用来解析物体指代，不得复用历史坐标或把旧的同意当成本轮授权。没有pending_preparation的“同意”不能套用历史准备问题。仅有“好，现在/嗯，接下来”等未说完的开场是chat，不得生成操作。',
+    },
+    {
+      role: 'user',
+      content: JSON.stringify({
+        recent_instructions: history.slice(-INSTRUCTION_MEMORY_LIMIT),
+        current_utterance: text,
+        pending_preparation: pendingPreparation,
+        control_context: controlContext,
+      }),
+    },
+  ] as import('./intelligence/model-client.js').Message[];
+  const answer = await routedCompletion(
+    profiles,
+    messages,
+    [],
+    signal ?? AbortSignal.timeout(30000),
+    () => Promise.resolve(),
+  );
+  const raw = typeof answer.message.content === 'string' ? answer.message.content : '';
   return semanticFrame(
     JSON.parse(
       raw

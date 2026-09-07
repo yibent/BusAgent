@@ -24,6 +24,7 @@ import { Logger } from '../../../common/logger.js';
 import { QueueStore, type QueuedEvent } from './queue-store.js';
 import { ModelConfig } from './model-config.js';
 import { planGoal } from './planning.js';
+import { ContextCompression } from '../../../modules/conversation/context-compression.js';
 import { observeScene, readObservation } from './observation-tools.js';
 import {
   ended,
@@ -255,6 +256,7 @@ export class TaskEngine
     private readonly runtime: RuntimeState,
     private readonly bus: EventBus,
     private readonly memory?: ContextMemory,
+    private readonly compression?: ContextCompression,
   ) {}
   onModuleInit() {
     if (!AgentClasses.has(this.registrationKey))
@@ -1022,7 +1024,12 @@ export class TaskEngine
         state,
         {
           images: false,
-          fallbackProfiles: [],
+          createWindow: this.compression
+            ? (...args) => this.compression!.createWindow(...args)
+            : undefined,
+          contextBudgetTokens: settings.performance.contextBudgetTokens ?? 12000,
+          toolResultBudgetTokens: settings.performance.toolResultBudgetTokens ?? 1600,
+          fallbackProfiles: profiles.slice(1),
           toolRounds: 2,
           ahead: {
             active_action: flight,
@@ -1271,6 +1278,9 @@ export class TaskEngine
       state,
       {
         images: settings.images,
+        createWindow: this.compression
+          ? (...args) => this.compression!.createWindow(...args)
+          : undefined,
         conversation:
           role === 'planner'
             ? await this.memory?.view(goal.conversation_id, 2000)

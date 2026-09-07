@@ -2,7 +2,10 @@ import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ModelConfig } from '../src/apps/desktop-robot/intelligence/model-config.js';
+import {
+  ModelConfig,
+  completionsUrl,
+} from '../src/apps/desktop-robot/intelligence/model-config.js';
 import { complete } from '../src/apps/desktop-robot/intelligence/model-client.js';
 import type { HostConfig } from '../src/config/host-config.js';
 
@@ -12,7 +15,9 @@ describe('private model profiles', () => {
   beforeEach(async () => {
     directory = await mkdtemp(join(tmpdir(), 'busagent-profiles-test-'));
     vi.stubEnv('BUSAGENT_INTELLIGENCE_CONFIG', join(directory, 'settings.json'));
-    vi.stubEnv('QWEN_CHAT_API_KEY', 'private-test-key');
+    vi.stubEnv('QWEN_CHAT_API_KEY', 'dialogue-test-key');
+    vi.stubEnv('GEMINI_PRIMARY_API_KEY', 'private-test-key');
+    vi.stubEnv('GEMINI_SECONDARY_API_KEY', 'secondary-test-key');
     vi.stubEnv('QWEN_CHAT_URL', 'https://model.test/v1');
     models = new ModelConfig({} as HostConfig);
   });
@@ -47,7 +52,7 @@ describe('private model profiles', () => {
       'qwen-plus',
     );
   });
-  it('isolates Qwen and GLM thinking parameters and does not log remote error bodies', async () => {
+  it('isolates Gemini and GLM thinking parameters and does not log remote error bodies', async () => {
     const profile = await models.profile('planner');
     const request = vi.fn().mockImplementation(() =>
       Promise.resolve(
@@ -63,7 +68,8 @@ describe('private model profiles', () => {
     let body = JSON.parse(
       (request.mock.calls[0]![1] as RequestInit).body as string,
     ) as Record<string, unknown>;
-    expect(body.enable_thinking).toBe(false);
+    expect(body.enable_thinking).toBeUndefined();
+    expect(body.reasoning_effort).toBe('low');
     expect(body.thinking).toBeUndefined();
     await complete(
       { ...profile, provider: 'glm', thinking: true },
@@ -113,5 +119,56 @@ describe('private model profiles', () => {
         >
       ).reasoning_effort,
     ).toBe('high');
+  });
+  it('keeps the two Gemini providers as peers when the preferred role is reversed', async () => {
+    const settings = await models.publicSettings();
+    await expect(models.save(settings, 'wrong')).rejects.toThrow();
+    settings.roles.planner = 'gemini-38-flash';
+    await models.save(settings, await readFile(models.tokenPath, 'utf8'));
+    expect((await models.profilesFor('planner')).map((p) => p.id)).toEqual([
+      'gemini-38-flash',
+      'gemini-37-flash',
+    ]);
+    expect((await models.dialogueProfiles()).map((p) => p.id)).toEqual(['qwen-plus']);
+    expect(completionsUrl('https://model.test/')).toBe(
+      'https://model.test/v1/chat/completions',
+    );
+    expect(completionsUrl('https://model.test/custom/v1/')).toBe(
+      'https://model.test/custom/v1/chat/completions',
+    );
+  });
+  it('preserves provider tool signature metadata when continuing an inference', async () => {
+    const message = {
+      role: 'assistant',
+      content: null,
+      tool_calls: [
+        {
+          id: 'call-1',
+          type: 'function',
+          function: { name: 'read_state', arguments: '{}' },
+          extra_content: { google: { thought_signature: 'opaque-signature' } },
+        },
+      ],
+    };
+    const request = vi
+      .fn()
+      .mockResolvedValue(Response.json({ choices: [{ message }] }));
+    vi.stubGlobal('fetch', request);
+    const profile = await models.profile('planner');
+    const first = await complete(profile, [], []);
+    request.mockResolvedValue(
+      Response.json({
+        choices: [{ message: { role: 'assistant', content: 'ready' } }],
+      }),
+    );
+    await complete(
+      profile,
+      [first.message, { role: 'tool', tool_call_id: 'call-1', content: '{}' }],
+      [],
+    );
+    const sent = JSON.parse(
+      (request.mock.calls[1]![1] as RequestInit).body as string,
+    ) as { messages: unknown[] };
+    expect(sent.messages[0]).toEqual(message);
   });
 });

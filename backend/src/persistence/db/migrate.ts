@@ -136,6 +136,14 @@ const MIGRATIONS: Migration[] = [
       `CREATE TABLE IF NOT EXISTS busagent_context_evidence (id VARCHAR(128) PRIMARY KEY, goal_id VARCHAR(128) NOT NULL, payload JSON NOT NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX idx_context_evidence_goal (goal_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
     ],
   },
+  {
+    version: 4,
+    name: 'memory_and_compression_nodes',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS busagent_conversation_memory (conversation_id VARCHAR(128) PRIMARY KEY, source_cursor VARCHAR(160) NOT NULL, payload JSON NOT NULL, updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+      `CREATE TABLE IF NOT EXISTS busagent_context_views (conversation_id VARCHAR(128) NOT NULL, budget INT NOT NULL, version VARCHAR(64) NOT NULL, payload JSON NOT NULL, updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), PRIMARY KEY(conversation_id,budget)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    ],
+  },
 ];
 
 /** Applies versioned migrations; MySQL is the source of truth for recovery. */

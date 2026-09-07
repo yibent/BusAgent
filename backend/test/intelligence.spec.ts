@@ -1073,7 +1073,7 @@ describe('model-driven observation', () => {
         return answer('ground_region', {
           image_ref: image.ref,
           category: 'part',
-          box_normalized: [0.1, 0.2, 0.3, 0.4],
+          box_2d: [200, 100, 400, 300],
         });
       }
       expect(JSON.stringify(messages)).toContain(

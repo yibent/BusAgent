@@ -337,6 +337,62 @@
         "context": ["task.*", "conversation.*", "perception.*"],
         "side_effects": []
       }
+    },
+    {
+      "agent_id": "robot.memory",
+      "endpoint": {
+        "adapter": "in-process",
+        "registration_key": "MemoryAgentNode"
+      },
+      "consumes": [
+        "intent.created",
+        "reply.created",
+        "intelligence.reply",
+        "execution.completed",
+        "execution.failed",
+        "execution.cancelled",
+        "execution.unknown"
+      ],
+      "produces": ["memory.updated"],
+      "configuration_schema": "schemas/intelligence-config.json",
+      "concurrency": {
+        "mode": "partitioned",
+        "partition_key": "correlation_id",
+        "limit": 2
+      },
+      "retry": {
+        "max_attempts": 2,
+        "backoff_ms": 250,
+        "dead_letter": true
+      },
+      "permissions": {
+        "context": ["conversation.*", "task.*"],
+        "side_effects": []
+      }
+    },
+    {
+      "agent_id": "robot.context_compression",
+      "endpoint": {
+        "adapter": "in-process",
+        "registration_key": "ContextCompressionAgentNode"
+      },
+      "consumes": ["memory.updated"],
+      "produces": ["context.compacted"],
+      "configuration_schema": "schemas/intelligence-config.json",
+      "concurrency": {
+        "mode": "partitioned",
+        "partition_key": "correlation_id",
+        "limit": 2
+      },
+      "retry": {
+        "max_attempts": 2,
+        "backoff_ms": 250,
+        "dead_letter": true
+      },
+      "permissions": {
+        "context": ["conversation.*", "task.*"],
+        "side_effects": []
+      }
     }
   ]
 }

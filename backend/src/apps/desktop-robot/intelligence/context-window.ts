@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { estimateTokens } from '../../../modules/conversation/context-memory.js';
+import { estimateTokens } from '../../../modules/conversation/context-format.js';
 import type { Message, Tool } from './model-client.js';
 
 const object = (v: unknown): Record<string, unknown> =>

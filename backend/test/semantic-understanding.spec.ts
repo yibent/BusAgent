@@ -3,7 +3,19 @@ import {
   semanticFrame,
   understandSemantic,
 } from '../src/apps/desktop-robot/semantic-understanding.js';
-import { HostConfig } from '../src/config/host-config.js';
+const profiles = [
+  {
+    id: 'gemini',
+    name: 'Gemini',
+    provider: 'gemini' as const,
+    model: 'gemini-3.7-flash',
+    baseUrl: 'http://gemini.test/v1',
+    apiKey: 'test',
+    thinking: true,
+    vision: true,
+    enabled: true,
+  },
+];
 import { cancelPendingIntent } from '../src/apps/desktop-robot/pending-intents.js';
 import { buildPlan } from '../src/apps/desktop-robot/planner-agent.js';
 import { validatePlan } from '../src/apps/desktop-robot/plan-validator-node.js';
@@ -21,9 +33,20 @@ describe('semantic frames and RGB-D grounding', () => {
       vi.fn((_url: string, options?: RequestInit) => {
         request = JSON.parse(options?.body as string) as Request;
         return Promise.resolve(
-          new Response(
-            `data: ${JSON.stringify({ choices: [{ delta: { content: JSON.stringify({ intent: 'pick', category: 'block', color: 'red' }) } }] })}\n\ndata: [DONE]\n`,
-          ),
+          Response.json({
+            choices: [
+              {
+                message: {
+                  role: 'assistant',
+                  content: JSON.stringify({
+                    intent: 'pick',
+                    category: 'block',
+                    color: 'red',
+                  }),
+                },
+              },
+            ],
+          }),
         );
       }),
     );
@@ -35,12 +58,10 @@ describe('semantic frames and RGB-D grounding', () => {
       task_outcomes: [{ event: 'execution.completed', message: '准备完成，尚未抓取' }],
     };
     const result = await understandSemantic(
-      HostConfig.fromEnv({ DASHSCOPE_API_KEY: 'test' }),
+      profiles,
       '重新抓取红色方块',
       history,
       undefined,
-      'qwen3.8-flash',
-      'low',
       undefined,
       facts,
     );
@@ -194,10 +215,16 @@ describe('semantic frames and RGB-D grounding', () => {
   it('passes structured conversational context to the semantic provider', async () => {
     const fetchMock = vi.fn(() =>
       Promise.resolve(
-        new Response(
-          'data: {"choices":[{"delta":{"content":"{\\"intent\\":\\"home\\"}"}}]}\n\ndata: [DONE]\n',
-          { status: 200 },
-        ),
+        Response.json({
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: JSON.stringify({ intent: 'home' }),
+              },
+            },
+          ],
+        }),
       ),
     );
     vi.stubGlobal('fetch', fetchMock);
@@ -205,24 +232,18 @@ describe('semantic frames and RGB-D grounding', () => {
       { intent: 'find', category: 'bolt', color: 'yellow' },
       '看看黄色螺栓',
     );
-    const result = await understandSemantic(
-      HostConfig.fromEnv({ DASHSCOPE_API_KEY: 'test' }),
-      '回到最开始那个姿势',
-      [prior],
-    );
+    const result = await understandSemantic(profiles, '回到最开始那个姿势', [prior]);
     expect(result.motion?.skill).toBe('home');
     expect(JSON.stringify(fetchMock.mock.calls)).toContain('recent_instructions');
-    expect(JSON.stringify(fetchMock.mock.calls)).toContain('qwen3.8-flash');
-    expect(JSON.stringify(fetchMock.mock.calls)).toContain('json_object');
+    expect(JSON.stringify(fetchMock.mock.calls)).toContain('gemini-3.7-flash');
     const body = JSON.parse(
       vi.mocked(fetch).mock.calls[0]?.[1]?.body as string,
     ) as Record<string, unknown>;
     expect(body).toMatchObject({
-      enable_thinking: true,
       reasoning_effort: 'low',
-      preserve_thinking: false,
     });
-    expect(body).not.toHaveProperty('thinking_budget');
+    expect(body).not.toHaveProperty('enable_thinking');
+    expect(body).not.toHaveProperty('preserve_thinking');
   });
   it.each([-90, 90])(
     'preserves signed base joint motion (%s) without an IK rotation',

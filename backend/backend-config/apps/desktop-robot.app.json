@@ -33,7 +33,7 @@
       "config": {
         "parser": "model",
         "parallel_interaction": true,
-        "model": "qwen3.8-flash",
+        "model": "configured-by-planner-role",
         "reasoning": "low"
       }
     },
@@ -173,6 +173,16 @@
     },
     {
       "agent_id": "robot.supervision",
+      "required": true,
+      "config": {}
+    },
+    {
+      "agent_id": "robot.memory",
+      "required": true,
+      "config": {}
+    },
+    {
+      "agent_id": "robot.context_compression",
       "required": true,
       "config": {}
     }
@@ -326,6 +336,39 @@
       "event": "intelligence.decision.proposed",
       "from": ["robot.planning", "robot.supervision"],
       "to": ["robot.intelligence"]
+    },
+    {
+      "event": "intent.created",
+      "to": ["robot.memory"]
+    },
+    {
+      "event": "reply.created",
+      "to": ["robot.memory"]
+    },
+    {
+      "event": "intelligence.reply",
+      "to": ["robot.memory"]
+    },
+    {
+      "event": "execution.completed",
+      "to": ["robot.memory"]
+    },
+    {
+      "event": "execution.failed",
+      "to": ["robot.memory"]
+    },
+    {
+      "event": "execution.cancelled",
+      "to": ["robot.memory"]
+    },
+    {
+      "event": "execution.unknown",
+      "to": ["robot.memory"]
+    },
+    {
+      "event": "memory.updated",
+      "from": ["robot.memory"],
+      "to": ["robot.context_compression"]
     }
   ]
 }

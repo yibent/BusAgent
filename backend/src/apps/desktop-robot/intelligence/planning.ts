@@ -6,7 +6,7 @@ import {
   validateVisualReferences,
 } from './planning-context.js';
 import { routedCompletion } from './model-routing.js';
-import { selectImageObject } from './visual-grounding.js';
+import { selectImageObject, normalizeSelectionBox } from './visual-grounding.js';
 import type { ModelProfile } from './model-config.js';
 import { randomUUID } from 'node:crypto';
 import { complete, type Message, type ModelAnswer, type Tool } from './model-client.js';
@@ -128,11 +128,17 @@ export const TOOLS: Tool[] = [
     function: {
       name: 'ground_region',
       description:
-        '将本轮read_image中选定的单个物体框交给SAM2，生成当前可执行引用。box_normalized为图像归一化[left,top,right,bottom]，image_ref来自read_image。',
+        '将本轮read_image中选定的单个物体框交给SAM2，生成当前可执行引用。优先box_2d=[ymin,xmin,ymax,xmax]归一化0..1000，也兼容box_normalized=[left,top,right,bottom]范围0..1。image_ref来自read_image。',
       parameters: object(
         {
           image_ref: { type: 'string' },
           category: { type: 'string' },
+          box_2d: {
+            type: 'array',
+            items: { type: 'number', minimum: 0, maximum: 1000 },
+            minItems: 4,
+            maxItems: 4,
+          },
           box_normalized: {
             type: 'array',
             items: { type: 'number' },
@@ -140,7 +146,7 @@ export const TOOLS: Tool[] = [
             maxItems: 4,
           },
         },
-        ['image_ref', 'category', 'box_normalized'],
+        ['image_ref', 'category'],
       ),
     },
   },
@@ -301,6 +307,9 @@ export interface PlanningContext {
   toolResultBudgetTokens?: number;
   archiveEvidence?: (ref: string, value: unknown) => Promise<void>;
   readEvidence?: (ref: string) => Promise<unknown>;
+  createWindow?:
+    | ((...args: ConstructorParameters<typeof InferenceWindow>) => InferenceWindow)
+    | undefined;
   conversation?: unknown;
   readHistory?(args: {
     query?: string;
@@ -339,7 +348,11 @@ export async function planGoal(
   const imageFrames = new Map<string, Record<string, unknown>>();
   const tools = roleTools(role);
   const submit = role === 'planner' ? 'submit_plan' : 'submit_review';
-  const window = new InferenceWindow(
+  const window = (
+    context.createWindow ??
+    ((...args: ConstructorParameters<typeof InferenceWindow>) =>
+      new InferenceWindow(...args))
+  )(
     context.contextBudgetTokens ?? 12000,
     context.toolResultBudgetTokens ?? 1600,
     context.archiveEvidence,
@@ -366,6 +379,19 @@ export async function planGoal(
         goal: {
           ...(planningGoal(goal) as Record<string, unknown>),
           evidence_ref: archivedGoal.evidence_ref,
+        },
+        queue_summary: {
+          paused: queue.paused,
+          total: queue.goals.length,
+          counts_by_state: queue.goals.reduce<Record<string, number>>(
+            (counts, item) => {
+              counts[item.state] = (counts[item.state] ?? 0) + 1;
+              return counts;
+            },
+            {},
+          ),
+          listed_scope:
+            '下方queue只展示其他未结束任务的前12项，并非任务总数；当前查询任务单列在goal。',
         },
         queue: queue.goals
           .filter(
@@ -590,7 +616,7 @@ export async function planGoal(
               grounding: {
                 snapshot_ref: frame.snapshot_ref,
                 camera: `${String(frame.camera)}_camera`,
-                box_normalized: args.box_normalized,
+                box_normalized: normalizeSelectionBox(args),
               },
             };
           }

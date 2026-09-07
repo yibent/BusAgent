@@ -58,6 +58,14 @@ export async function complete(
         ? { tools, tool_choice: 'auto', parallel_tool_calls: false }
         : {}),
       ...(profile.provider === 'qwen' ? { enable_thinking: profile.thinking } : {}),
+      ...(profile.provider === 'gemini'
+        ? {
+            reasoning_effort:
+              profile.reasoningEffort === 'max'
+                ? 'high'
+                : (profile.reasoningEffort ?? 'low'),
+          }
+        : {}),
       ...(profile.provider === 'glm'
         ? glmThinkingRequired
           ? {

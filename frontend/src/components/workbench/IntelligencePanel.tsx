@@ -18,7 +18,8 @@ type Profile = {
   enabled: boolean;
   vision: boolean;
   thinking: boolean;
-  reasoningEffort?: "low" | "high" | "max";
+  reasoningEffort?: "minimal" | "low" | "medium" | "high" | "max";
+  peerGroup?: string;
 };
 type Settings = {
   profiles: Profile[];
@@ -57,7 +58,8 @@ type Goal = {
 };
 type Queue = { enabled: boolean; paused: boolean; goals: Goal[] };
 const fixedThinking = (profile: Profile) =>
-  profile.provider === "glm" && /^glm-5\.3(?:-|$)/i.test(profile.model);
+  profile.provider === "gemini" ||
+  (profile.provider === "glm" && /^glm-5\.3(?:-|$)/i.test(profile.model));
 const states: Record<string, string> = {
   queued: "等待中",
   planning: "规划中",
@@ -319,6 +321,26 @@ export function IntelligencePanel({
                               ...settings.roles,
                               [role]: e.target.value,
                             },
+                            ...(role !== "dialogue"
+                              ? {
+                                  fallbacks: {
+                                    ...settings.fallbacks,
+                                    [role]: settings.profiles
+                                      .filter(
+                                        (p) =>
+                                          p.id !== e.target.value &&
+                                          p.enabled &&
+                                          p.peerGroup &&
+                                          p.peerGroup ===
+                                            settings.profiles.find(
+                                              (primary) =>
+                                                primary.id === e.target.value,
+                                            )?.peerGroup,
+                                      )
+                                      .map((p) => p.id),
+                                  },
+                                }
+                              : {}),
                           })
                         }
                       >
@@ -360,7 +382,7 @@ export function IntelligencePanel({
                         })
                       }
                     >
-                      <option value="">不自动切换</option>
+                      <option value="">仅使用同组互备模型</option>
                       {settings.profiles
                         .filter(
                           (p) =>
@@ -515,6 +537,7 @@ export function IntelligencePanel({
                         change(index, { provider: e.target.value })
                       }
                     >
+                      <option value="gemini">Gemini（兼容接口）</option>
                       <option value="qwen">Qwen</option>
                       <option value="glm">智谱 GLM</option>
                       <option value="openai-compatible">OpenAI 兼容接口</option>
@@ -585,9 +608,17 @@ export function IntelligencePanel({
                           })
                         }
                       >
+                        {p.provider === "gemini" && (
+                          <option value="minimal">最少</option>
+                        )}
                         <option value="low">低（优先速度）</option>
+                        {p.provider === "gemini" && (
+                          <option value="medium">中</option>
+                        )}
                         <option value="high">高</option>
-                        <option value="max">最高</option>
+                        {p.provider !== "gemini" && (
+                          <option value="max">最高</option>
+                        )}
                       </select>
                     </label>
                   )}

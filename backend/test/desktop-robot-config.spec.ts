@@ -23,7 +23,7 @@ describe('desktop robot runtime configuration', () => {
     expect(
       app.agents.find((a) => a.agent_id === 'robot.instruction_understanding')?.config,
     ).toMatchObject({
-      model: 'qwen3.8-flash',
+      model: 'configured-by-planner-role',
       reasoning: 'low',
       parallel_interaction: true,
     });
