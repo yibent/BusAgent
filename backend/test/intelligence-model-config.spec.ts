@@ -1,0 +1,106 @@
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ModelConfig } from '../src/apps/desktop-robot/intelligence/model-config.js';
+import { complete } from '../src/apps/desktop-robot/intelligence/model-client.js';
+import type { HostConfig } from '../src/config/host-config.js';
+
+describe('private model profiles', () => {
+  let directory: string;
+  let models: ModelConfig;
+  beforeEach(async () => {
+    directory = await mkdtemp(join(tmpdir(), 'busagent-profiles-test-'));
+    vi.stubEnv('BUSAGENT_INTELLIGENCE_CONFIG', join(directory, 'settings.json'));
+    vi.stubEnv('QWEN_CHAT_API_KEY', 'private-test-key');
+    vi.stubEnv('QWEN_CHAT_URL', 'https://model.test/v1');
+    models = new ModelConfig({} as HostConfig);
+  });
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    await rm(directory, { recursive: true, force: true });
+  });
+  it('requires an admin token and preserves keys without returning them to the browser', async () => {
+    const publicSettings = await models.publicSettings();
+    expect(JSON.stringify(publicSettings)).not.toContain('private-test-key');
+    await expect(models.save(publicSettings, 'wrong')).rejects.toThrow('管理令牌');
+    const token = await readFile(models.tokenPath, 'utf8');
+    const saved = await models.save(publicSettings, token);
+    expect(JSON.stringify(saved)).not.toContain('private-test-key');
+    expect((await models.profile('planner')).apiKey).toBe('private-test-key');
+    expect((await stat(models.path)).mode & 0o777).toBe(0o600);
+    expect((await stat(models.tokenPath)).mode & 0o777).toBe(0o600);
+    expect((await new ModelConfig({} as HostConfig).profile('planner')).apiKey).toBe(
+      'private-test-key',
+    );
+  });
+  it('isolates Qwen and GLM thinking parameters and does not log remote error bodies', async () => {
+    const profile = await models.profile('planner');
+    const request = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { role: 'assistant', content: 'OK' } }],
+          }),
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', request);
+    await complete(profile, [{ role: 'user', content: 'test' }], []);
+    let body = JSON.parse(
+      (request.mock.calls[0]![1] as RequestInit).body as string,
+    ) as Record<string, unknown>;
+    expect(body.enable_thinking).toBe(false);
+    expect(body.thinking).toBeUndefined();
+    await complete(
+      { ...profile, provider: 'glm', thinking: true },
+      [{ role: 'user', content: 'test' }],
+      [],
+    );
+    body = JSON.parse(
+      (request.mock.calls[1]![1] as RequestInit).body as string,
+    ) as Record<string, unknown>;
+    expect(body.enable_thinking).toBeUndefined();
+    expect(body.thinking).toEqual({ type: 'enabled' });
+    request.mockResolvedValueOnce(
+      new Response('sensitive remote diagnostics', { status: 401 }),
+    );
+    await expect(complete(profile, [], [])).rejects.toThrow('HTTP 401');
+  });
+  it('uses the supported GLM 5.3 thinking mode even with a previously disabled setting', async () => {
+    const request = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { role: 'assistant', content: 'OK' } }],
+          }),
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', request);
+    const profile = {
+      ...(await models.profile('planner')),
+      provider: 'glm' as const,
+      model: 'glm-5.3-flash',
+      thinking: false,
+    };
+    await complete(profile, [{ role: 'user', content: 'test' }], []);
+    const body = JSON.parse(
+      (request.mock.calls[0]![1] as RequestInit).body as string,
+    ) as Record<string, unknown>;
+    expect(body.thinking).toEqual({ type: 'enabled', clear_thinking: false });
+    expect(body.reasoning_effort).toBe('low');
+    expect(body.enable_thinking).toBeUndefined();
+    await complete({ ...profile, reasoningEffort: 'high' }, [], []);
+    expect(
+      (
+        JSON.parse((request.mock.calls[1]![1] as RequestInit).body as string) as Record<
+          string,
+          unknown
+        >
+      ).reasoning_effort,
+    ).toBe('high');
+  });
+});

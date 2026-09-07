@@ -1,3 +1,7 @@
+import { PersistenceModule } from '../../persistence/persistence.module.js';
+import { QueueStore } from './intelligence/queue-store.js';
+import { ModelConfig } from './intelligence/model-config.js';
+import { TaskEngine } from './intelligence/task-engine.js';
 import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '../../config/config.module.js';
 import { RuntimeModule } from '../../app/runtime.module.js';
@@ -25,6 +29,7 @@ import { RobotControlProxy } from './robot-control-proxy.js';
 @Module({
   imports: [
     ConfigModule,
+    PersistenceModule,
     RuntimeModule,
     forwardRef(() => BusModule),
     SttModule,
@@ -32,6 +37,9 @@ import { RobotControlProxy } from './robot-control-proxy.js';
     TtsModule,
   ],
   providers: [
+    QueueStore,
+    ModelConfig,
+    TaskEngine,
     InterruptMonitorNode,
     InstructionUnderstandingNode,
     GroundingClarificationNode,
@@ -43,6 +51,13 @@ import { RobotControlProxy } from './robot-control-proxy.js';
     RobotControlProxy,
     VisionNode,
   ],
-  exports: [SttModule, DialogueModule, TtsModule, RobotControlProxy],
+  exports: [
+    TaskEngine,
+    ModelConfig,
+    SttModule,
+    DialogueModule,
+    TtsModule,
+    RobotControlProxy,
+  ],
 })
 export class DesktopRobotModule {}

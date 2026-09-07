@@ -2595,3 +2595,120 @@ p {
     width: 40px;
   }
 }
+
+/* Task state is separate from the execution event timeline. */
+.ui-dialog-content:has(.intelligence-panel) {
+  width: min(850px, calc(100vw - 32px));
+  max-width: 850px;
+}
+.intelligence-panel {
+  max-height: 72vh;
+  overflow: auto;
+  padding: 16px 3px 4px;
+  display: grid;
+  gap: 14px;
+}
+.intelligence-panel label {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  color: #b4b9c1;
+}
+.intelligence-panel input,
+.intelligence-panel select {
+  padding: 8px 10px;
+  border: 1px solid #3b3e45;
+  border-radius: 5px;
+  background: #1c1e22;
+  min-width: 0;
+  width: 100%;
+}
+.intelligence-panel .check-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.intelligence-panel input[type="checkbox"] {
+  width: auto;
+}
+.intelligence-toolbar,
+.goal-heading,
+.goal-actions,
+.model-flags {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.goal-card,
+.model-profile {
+  padding: 16px;
+  border: 1px solid #373a40;
+  border-radius: 7px;
+  background: #1d1f23;
+}
+.goal-card p {
+  margin: 10px 0;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.goal-heading strong {
+  max-width: 80%;
+  font-size: 14px;
+}
+.goal-heading span,
+.goal-actions small {
+  color: #aeb4bd;
+  font-size: 12px;
+}
+.goal-criterion,
+.intelligence-empty {
+  color: #959ca7;
+}
+.goal-card ol {
+  display: grid;
+  gap: 9px;
+  padding-left: 22px;
+  font-size: 13px;
+}
+.goal-card li small {
+  display: block;
+  color: #9199a4;
+  margin-top: 3px;
+}
+.goal-card [data-state="completed"] {
+  color: #92bda4;
+}
+.goal-card [data-state="failed"],
+.goal-card [data-state="blocked"] {
+  color: #e3ab8a;
+}
+.goal-card [data-state="superseded"] {
+  opacity: 0.55;
+}
+.goal-card pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+.model-role-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.model-profile {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.model-profile legend {
+  padding: 0 7px;
+}
+.intelligence-notice {
+  background: #302c24;
+  color: #dfc496;
+  border-radius: 5px;
+  padding: 10px;
+  font-size: 13px;
+}

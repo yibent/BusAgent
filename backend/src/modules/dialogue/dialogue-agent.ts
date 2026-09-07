@@ -1,3 +1,4 @@
+import { intelligenceEnabled } from '../../apps/desktop-robot/intelligence/types.js';
 import { trackBackground } from '../../observability/execution-span.js';
 import { readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
@@ -223,6 +224,19 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
   }
 
   async handle(context: InProcessEventContext): Promise<void> {
+    if (context.event.eventType === 'intelligence.reply') {
+      await this.replyWithFact(
+        context,
+        String((context.event.payload as { text?: string }).text ?? ''),
+        false,
+      );
+      return;
+    }
+    if (intelligenceEnabled()) {
+      if (context.event.eventType.startsWith('transcript.'))
+        this.tts.cancel(context.event.correlationId);
+      return;
+    }
     const parallel = context.agentConfig.config.parallel_interaction === true;
     const task = parallel ? this.tasks.observe(context) : undefined;
     if (

@@ -1,3 +1,4 @@
+import { intelligenceEnabled } from './intelligence/types.js';
 import { trackBackground } from '../../observability/execution-span.js';
 import { Injectable, OnModuleInit, Optional } from '@nestjs/common';
 import { HostConfig } from '../../config/host-config.js';
@@ -317,6 +318,7 @@ export class InstructionUnderstandingNode implements InProcessAgent, OnModuleIni
   }
 
   async handle(context: InProcessEventContext): Promise<void> {
+    if (intelligenceEnabled()) return;
     if (context.event.eventType !== 'intent.created') return;
     if (isImmediateInterrupt(textPayload(context.event.payload))) {
       cancelPendingIntent(context.event.correlationId);

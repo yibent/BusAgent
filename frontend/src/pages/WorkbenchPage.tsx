@@ -1,3 +1,4 @@
+import { IntelligencePanel } from "@/components/workbench/IntelligencePanel";
 import { useCallback, useState } from "react";
 import { Boxes, CircleHelp, LayoutPanelTop, Settings2, X } from "lucide-react";
 import { useConversation } from "@/hooks/useConversation";
@@ -38,6 +39,9 @@ export function WorkbenchPage() {
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(
     null,
   );
+  const [intelligencePage, setIntelligencePage] = useState<
+    "tasks" | "models" | null
+  >(null);
   const [help, setHelp] = useState(false);
   const [layoutVersion, setLayoutVersion] = useState(0);
   const perform = useCallback(
@@ -126,6 +130,20 @@ export function WorkbenchPage() {
             </Tip>
           </nav>
           <div className="header-right">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setIntelligencePage("tasks")}
+            >
+              任务队列
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setIntelligencePage("models")}
+            >
+              模型设置
+            </Button>
             <span className="connection-status">
               <i className={`dot ${robot.connected ? "fast" : ""}`} />
               {robot.connected ? "仿真已连接" : "连接中"}
@@ -289,6 +307,10 @@ export function WorkbenchPage() {
             </button>
           </div>
         )}
+        <IntelligencePanel
+          page={intelligencePage}
+          onClose={() => setIntelligencePage(null)}
+        />
         <Dialog open={help} onOpenChange={setHelp}>
           <DialogContent>
             <DialogTitle>

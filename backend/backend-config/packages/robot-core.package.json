@@ -11,9 +11,7 @@
         "adapter": "in-process",
         "registration_key": "InstructionUnderstandingNode"
       },
-      "consumes": [
-        "intent.created"
-      ],
+      "consumes": ["intent.created"],
       "produces": [
         "instruction.parsed",
         "interaction.classified",
@@ -31,10 +29,7 @@
         "dead_letter": true
       },
       "permissions": {
-        "context": [
-          "conversation.*",
-          "task.*"
-        ],
+        "context": ["conversation.*", "task.*"],
         "side_effects": []
       }
     },
@@ -44,15 +39,8 @@
         "adapter": "in-process",
         "registration_key": "GroundingClarificationNode"
       },
-      "consumes": [
-        "instruction.parsed",
-        "scene.snapshot.updated"
-      ],
-      "produces": [
-        "command.grounded",
-        "observation.ready",
-        "clarification.requested"
-      ],
+      "consumes": ["instruction.parsed", "scene.snapshot.updated"],
+      "produces": ["command.grounded", "observation.ready", "clarification.requested"],
       "configuration_schema": "schemas/grounding-config.json",
       "concurrency": {
         "mode": "partitioned",
@@ -65,11 +53,7 @@
         "dead_letter": true
       },
       "permissions": {
-        "context": [
-          "task.*",
-          "conversation.*",
-          "scene.*"
-        ],
+        "context": ["task.*", "conversation.*", "scene.*"],
         "side_effects": []
       }
     },
@@ -79,14 +63,8 @@
         "adapter": "in-process",
         "registration_key": "TaskPlannerNode"
       },
-      "consumes": [
-        "command.grounded",
-        "perception.completed"
-      ],
-      "produces": [
-        "plan.proposed",
-        "plan.failed"
-      ],
+      "consumes": ["command.grounded", "perception.completed"],
+      "produces": ["plan.proposed", "plan.failed"],
       "configuration_schema": "schemas/planner-config.json",
       "concurrency": {
         "mode": "partitioned",
@@ -99,10 +77,7 @@
         "dead_letter": true
       },
       "permissions": {
-        "context": [
-          "task.*",
-          "perception.*"
-        ],
+        "context": ["task.*", "perception.*"],
         "side_effects": []
       }
     },
@@ -112,12 +87,8 @@
         "adapter": "in-process",
         "registration_key": "LoopRouterNode"
       },
-      "consumes": [
-        "plan.validated"
-      ],
-      "produces": [
-        "execution.profile.selected"
-      ],
+      "consumes": ["plan.validated"],
+      "produces": ["execution.profile.selected"],
       "configuration_schema": "schemas/loop-router-config.json",
       "concurrency": {
         "mode": "partitioned",
@@ -130,10 +101,7 @@
         "dead_letter": true
       },
       "permissions": {
-        "context": [
-          "task.*",
-          "scene.*"
-        ],
+        "context": ["task.*", "scene.*"],
         "side_effects": []
       }
     },
@@ -143,13 +111,8 @@
         "adapter": "in-process",
         "registration_key": "PlanValidatorNode"
       },
-      "consumes": [
-        "plan.proposed"
-      ],
-      "produces": [
-        "plan.validated",
-        "plan.rejected"
-      ],
+      "consumes": ["plan.proposed"],
+      "produces": ["plan.validated", "plan.rejected"],
       "configuration_schema": "schemas/plan-validator-config.json",
       "concurrency": {
         "mode": "partitioned",
@@ -162,9 +125,7 @@
         "dead_letter": true
       },
       "permissions": {
-        "context": [
-          "task.*"
-        ],
+        "context": ["task.*"],
         "side_effects": []
       }
     },
@@ -174,13 +135,8 @@
         "adapter": "in-process",
         "registration_key": "InterruptMonitorNode"
       },
-      "consumes": [
-        "transcript.delta",
-        "transcript.final"
-      ],
-      "produces": [
-        "interrupt.requested"
-      ],
+      "consumes": ["transcript.delta", "transcript.final"],
+      "produces": ["interrupt.requested"],
       "configuration_schema": "schemas/interrupt-monitor-config.json",
       "concurrency": {
         "mode": "partitioned",
@@ -193,10 +149,7 @@
         "dead_letter": true
       },
       "permissions": {
-        "context": [
-          "conversation.*",
-          "task.*"
-        ],
+        "context": ["conversation.*", "task.*"],
         "side_effects": []
       }
     },
@@ -204,7 +157,7 @@
       "agent_id": "robot.dialogue",
       "endpoint": {
         "adapter": "in-process",
-      "registration_key": "DialogueAgent"
+        "registration_key": "DialogueAgent"
       },
       "consumes": [
         "intent.created",
@@ -225,11 +178,10 @@
         "transcript.delta",
         "transcript.final",
         "execution.started",
-        "execution.progress"
+        "execution.progress",
+        "intelligence.reply"
       ],
-      "produces": [
-        "reply.created"
-      ],
+      "produces": ["reply.created"],
       "configuration_schema": "schemas/dialogue-config.json",
       "concurrency": {
         "mode": "partitioned",
@@ -242,9 +194,7 @@
         "dead_letter": true
       },
       "permissions": {
-        "context": [
-          "conversation.*"
-        ],
+        "context": ["conversation.*"],
         "side_effects": []
       }
     },
@@ -255,11 +205,7 @@
         "registration_key": "SttAgent"
       },
       "consumes": [],
-      "produces": [
-        "transcript.delta",
-        "transcript.final",
-        "intent.created"
-      ],
+      "produces": ["transcript.delta", "transcript.final", "intent.created"],
       "configuration_schema": "schemas/stt-config.json",
       "concurrency": {
         "mode": "partitioned",
@@ -272,9 +218,7 @@
         "dead_letter": true
       },
       "permissions": {
-        "context": [
-          "conversation.*"
-        ],
+        "context": ["conversation.*"],
         "side_effects": []
       }
     },
@@ -298,9 +242,48 @@
         "dead_letter": true
       },
       "permissions": {
-        "context": [
-          "conversation.*"
-        ],
+        "context": ["conversation.*"],
+        "side_effects": []
+      }
+    },
+    {
+      "agent_id": "robot.intelligence",
+      "endpoint": {
+        "adapter": "in-process",
+        "registration_key": "IntelligenceNode"
+      },
+      "consumes": [
+        "intent.created",
+        "interrupt.requested",
+        "execution.accepted",
+        "execution.started",
+        "execution.progress",
+        "execution.completed",
+        "execution.failed",
+        "execution.unknown",
+        "execution.cancelled",
+        "plan.rejected",
+        "perception.reported"
+      ],
+      "produces": [
+        "plan.proposed",
+        "intelligence.reply",
+        "intelligence.observed",
+        "interrupt.requested",
+        "task.cancelled"
+      ],
+      "configuration_schema": "schemas/intelligence-config.json",
+      "concurrency": {
+        "mode": "serial",
+        "limit": 1
+      },
+      "retry": {
+        "max_attempts": 2,
+        "backoff_ms": 500,
+        "dead_letter": true
+      },
+      "permissions": {
+        "context": ["task.*", "conversation.*", "perception.*"],
         "side_effects": []
       }
     }

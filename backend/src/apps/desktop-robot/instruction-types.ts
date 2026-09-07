@@ -70,6 +70,9 @@ export interface SkillStep {
 }
 
 export interface RobotPlan {
+  command_id?: string;
+  queue_goal_id?: string;
+  dispatch_attempt?: number;
   instruction_id: string;
   task_version: number;
   intent: ParsedInstruction;

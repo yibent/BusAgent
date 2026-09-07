@@ -49,7 +49,7 @@ describe('nominal vision node', () => {
       semantic_status: 'detected',
     });
   });
-  it('never routes observations into either language-model agent', () => {
+  it('routes structured observations to the task engine without triggering legacy language agents', () => {
     const app = JSON.parse(
       readFileSync('backend-config/apps/desktop-robot.app.json', 'utf8'),
     );
@@ -58,6 +58,11 @@ describe('nominal vision node', () => {
     );
     expect(routes).toEqual([
       expect.objectContaining({ event: 'perception.observed', to: ['robot.vision'] }),
+      expect.objectContaining({
+        event: 'perception.reported',
+        from: ['robot.vision'],
+        to: ['robot.intelligence'],
+      }),
     ]);
   });
 });

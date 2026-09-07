@@ -50,6 +50,7 @@ describe('desktop robot runtime configuration', () => {
     expect(intentRoute?.to).toEqual([
       'robot.instruction_understanding',
       'robot.dialogue',
+      'robot.intelligence',
     ]);
     expect(
       app.config.routes.find((route) => route.event === 'conversation.requested')?.to,

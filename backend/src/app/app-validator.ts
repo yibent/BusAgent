@@ -7,8 +7,9 @@ import { RegistryService } from '../registry/registry.service.js';
 /**
  * App validation (spec §6): referenced agents installed, event contract match,
  * retry override within the Package cap, config conforming to the declared
- * configuration schema, route targets within the App's allowed set, and no
- * agent consuming/producing the same event type (forbidden self-loop).
+ * configuration schema, and route targets within the App's allowed set.
+ * Consuming and producing a type is valid for feedback agents; explicit routes
+ * and idempotency determine delivery, not overlapping declarations.
  */
 @Injectable()
 export class AppValidator {
@@ -31,17 +32,6 @@ export class AppValidator {
         );
       }
       agentIds.add(entry.agent_id);
-
-      const overlap = installed.consumes.filter((et) =>
-        installed.produces.includes(et),
-      );
-      if (overlap.length > 0) {
-        throw new BusAgentError(
-          'CONFIG_INVALID',
-          `Agent ${entry.agent_id} consumes and produces the same event type: ${overlap.join(', ')}`,
-          { appId: app.app.id },
-        );
-      }
 
       if (
         entry.retry_override &&

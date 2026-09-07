@@ -268,6 +268,7 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
         // A stopped old command cannot release a different/new command's lane.
         if (this.active.get(lane) !== context) return;
         if (
+          !readPlan(context.event.payload)?.queue_goal_id &&
           outcome !== 'completed' &&
           !(outcome === 'cancelled' && epoch !== (this.interruptEpoch.get(lane) ?? 0))
         ) {
@@ -311,11 +312,15 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
     );
 
     const results: ControlResult[] = [];
-    for (const step of plan.steps) {
+    for (const [stepIndex, step] of plan.steps.entries()) {
       let result: ControlResult;
       try {
         result = await adapter.execute(
-          `${context.event.eventId}:${step.id}`,
+          plan.command_id
+            ? plan.steps.length === 1
+              ? plan.command_id
+              : `${plan.command_id}:${step.id}`
+            : `${context.event.eventId}:${step.id}`,
           step,
           taskId,
           taskVersion,
@@ -350,9 +355,19 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
       });
       if (['accepted', 'started', 'running'].includes(result.state ?? '')) {
         // Release the adapter delivery queue so voice HOLD can reach the arm.
-        // Finite motion plans currently contain exactly one controller command.
+        // Keep this plan's later steps waiting for each physical terminal result.
         submitted();
-        return this.watchMotion(context, adapter, result, step);
+        const finalStep = stepIndex === plan.steps.length - 1;
+        const outcome = await this.watchMotion(
+          context,
+          adapter,
+          result,
+          step,
+          finalStep,
+        );
+        if (outcome !== 'completed' || finalStep) return outcome;
+        results.push({ ...result, state: 'completed' });
+        continue;
       }
       results.push(result);
     }
@@ -378,6 +393,7 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
     adapter: HttpRobotAdapter,
     first: ControlResult,
     step: SkillStep,
+    finalStep = true,
   ): Promise<'completed' | 'failed' | 'cancelled' | 'unknown'> {
     try {
       if (!first.commandId) throw new Error('控制器未返回命令编号，结果未知');
@@ -430,7 +446,8 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
           });
         }
         const phase = typeof detail?.phase === 'string' ? detail.phase : '';
-        const progressKey = `${phase}:${String(detail?.progress_seq ?? '')}`;
+        const sequence = detail?.progress_seq;
+        const progressKey = `${phase}:${typeof sequence === 'number' || typeof sequence === 'string' ? sequence : ''}`;
         if (
           started &&
           ['started', 'running'].includes(result.state ?? '') &&
@@ -457,7 +474,9 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
           await this.publishStatus(
             context,
             result.state === 'completed' && result.ok
-              ? 'execution.completed'
+              ? finalStep
+                ? 'execution.completed'
+                : 'execution.progress'
               : result.state === 'cancelled'
                 ? 'execution.cancelled'
                 : 'execution.failed',
@@ -467,6 +486,7 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
               command_id: first.commandId,
               message: result.message,
               result: result.data,
+              step_completed: result.state === 'completed' && result.ok,
             },
           );
           return result.state === 'completed' && result.ok
@@ -505,7 +525,12 @@ export class RobotAdapterNode implements InProcessAgent, OnModuleInit {
       causation_id: context.event.eventId,
       ...(context.event.taskId ? { task_id: context.event.taskId } : {}),
       ...(context.event.taskVersion ? { task_version: context.event.taskVersion } : {}),
-      payload,
+      payload: {
+        ...payload,
+        ...(readPlan(context.event.payload)?.queue_goal_id
+          ? { queue_goal_id: readPlan(context.event.payload)?.queue_goal_id }
+          : {}),
+      },
     });
   }
 }

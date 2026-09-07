@@ -119,7 +119,17 @@ const INITIAL_STATEMENTS = [
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 ];
 
-const MIGRATIONS: Migration[] = [{ version: 1, name: 'init', statements: INITIAL_STATEMENTS }];
+const MIGRATIONS: Migration[] = [
+  { version: 1, name: 'init', statements: INITIAL_STATEMENTS },
+  {
+    version: 2,
+    name: 'durable_goal_queue',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS busagent_goal_queue (id VARCHAR(128) PRIMARY KEY, payload JSON NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+      `CREATE TABLE IF NOT EXISTS busagent_goal_outbox (sequence_id BIGINT AUTO_INCREMENT PRIMARY KEY, id VARCHAR(160) NOT NULL UNIQUE, payload JSON NOT NULL, sent TINYINT NOT NULL DEFAULT 0, INDEX idx_goal_outbox_sent (sent, sequence_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    ],
+  },
+];
 
 /** Applies versioned migrations; MySQL is the source of truth for recovery. */
 @Injectable()
@@ -143,7 +153,9 @@ export class MigrationRunner {
       );
       const applied = rows as RowDataPacket[];
       if (applied.length > 0) {
-        this.logger.debug(`migration ${migration.version} ${migration.name} already applied`);
+        this.logger.debug(
+          `migration ${migration.version} ${migration.name} already applied`,
+        );
         continue;
       }
       this.logger.info(`applying migration ${migration.version} ${migration.name}`);

@@ -71,23 +71,15 @@
         "profiles": {
           "perceive": {
             "primary": "approach_fast_loop",
-            "fallbacks": [
-              "precise_perception_loop"
-            ]
+            "fallbacks": ["precise_perception_loop"]
           },
           "select_target": {
             "primary": "approach_fast_loop",
-            "fallbacks": [
-              "open_world_recognition_loop"
-            ]
+            "fallbacks": ["open_world_recognition_loop"]
           },
           "plan_grasp": {
             "primary": "fine_grasp_geometry_loop",
-            "fallbacks": [
-              "fine_grasp_visual_servo",
-              "fine_grasp_act",
-              "fine_grasp_vla"
-            ]
+            "fallbacks": ["fine_grasp_visual_servo", "fine_grasp_act", "fine_grasp_vla"]
           },
           "move_to": {
             "primary": "approach_fast_loop",
@@ -95,11 +87,7 @@
           },
           "grasp": {
             "primary": "fine_grasp_geometry_loop",
-            "fallbacks": [
-              "fine_grasp_visual_servo",
-              "fine_grasp_act",
-              "fine_grasp_vla"
-            ]
+            "fallbacks": ["fine_grasp_visual_servo", "fine_grasp_act", "fine_grasp_vla"]
           },
           "transport": {
             "primary": "transport_loop",
@@ -107,15 +95,11 @@
           },
           "place": {
             "primary": "fine_place_loop",
-            "fallbacks": [
-              "fine_place_visual_servo"
-            ]
+            "fallbacks": ["fine_place_visual_servo"]
           },
           "verify_placement": {
             "primary": "verification_loop",
-            "fallbacks": [
-              "precise_perception_loop"
-            ]
+            "fallbacks": ["precise_perception_loop"]
           },
           "follow": {
             "primary": "approach_fast_loop",
@@ -176,179 +160,147 @@
       "agent_id": "robot.vision",
       "required": true,
       "config": {}
+    },
+    {
+      "agent_id": "robot.intelligence",
+      "required": true,
+      "config": {}
     }
   ],
   "routes": [
-    { "event": "execution.queued", "from": ["robot.device_adapter"], "to": ["robot.dialogue"] },
-    { "event": "execution.cancelled", "from": ["robot.device_adapter"], "to": ["robot.dialogue"] },
-    { "event": "observation.ready", "from": ["robot.grounding_clarification"], "to": ["robot.dialogue"] },
-    { "event": "interaction.classified", "from": ["robot.instruction_understanding"], "to": ["robot.dialogue"] },
-    { "event": "execution.accepted", "from": ["robot.device_adapter"], "to": ["robot.dialogue"] },
-    { "event": "plan.failed", "from": ["robot.task_planner"], "to": ["robot.dialogue"] },
     {
-      "event": "transcript.delta",
-      "from": [
-        "robot.stt"
-      ],
-      "to": [
-        "robot.dialogue",
-        "robot.interrupt_monitor"
-      ]
-    },
-    {
-      "event": "transcript.final",
-      "from": [
-        "robot.stt"
-      ],
-      "to": [
-        "robot.dialogue",
-        "robot.interrupt_monitor"
-      ]
-    },
-    {
-      "event": "intent.created",
-      "to": [
-        "robot.instruction_understanding",
-        "robot.dialogue"
-      ]
-    },
-    {
-      "event": "instruction.parsed",
-      "from": [
-        "robot.instruction_understanding"
-      ],
-      "to": [
-        "robot.grounding_clarification",
-        "robot.dialogue"
-      ]
-    },
-    {
-      "event": "command.grounded",
-      "from": [
-        "robot.grounding_clarification"
-      ],
-      "to": [
-        "robot.task_planner",
-        "robot.dialogue"
-      ]
-    },
-    {
-      "event": "clarification.requested",
-      "from": [
-        "robot.grounding_clarification"
-      ],
-      "to": [
-        "robot.dialogue"
-      ]
-    },
-    {
-      "event": "plan.proposed",
-      "from": [
-        "robot.task_planner"
-      ],
-      "to": [
-        "robot.plan_validator"
-      ]
-    },
-    {
-      "event": "plan.validated",
-      "from": [
-        "robot.plan_validator"
-      ],
-      "to": [
-        "robot.loop_router"
-      ]
-    },
-    {
-      "event": "execution.profile.selected",
-      "from": [
-        "robot.loop_router"
-      ],
-      "to": [
-        "robot.execution_coordinator"
-      ]
-    },
-    {
-      "event": "plan.rejected",
-      "from": [
-        "robot.plan_validator"
-      ],
-      "to": [
-        "robot.dialogue"
-      ]
-    },
-    {
-      "event": "interrupt.requested",
-      "from": [
-        "robot.interrupt_monitor"
-      ],
-      "to": [
-        "robot.execution_coordinator"
-      ]
-    },
-    {
-      "event": "robot.execute.requested",
-      "from": [
-        "robot.execution_coordinator"
-      ],
-      "to": [
-        "robot.device_adapter"
-      ]
-    },
-    {
-      "event": "execution.completed",
-      "from": [
-        "robot.device_adapter"
-      ],
-      "to": [
-        "robot.dialogue"
-      ]
-    },
-    {
-      "event": "execution.failed",
-      "from": [
-        "robot.device_adapter"
-      ],
-      "to": [
-        "robot.dialogue"
-      ]
-    },
-    {
-      "event": "execution.unknown",
-      "from": [
-        "robot.device_adapter"
-      ],
-      "to": [
-        "robot.dialogue"
-      ]
-    },
-    {
-      "event": "conversation.requested",
-      "from": [
-        "robot.instruction_understanding"
-      ],
-      "to": [
-        "robot.dialogue"
-      ]
-    },
-    {
-      "event": "execution.progress",
+      "event": "execution.queued",
       "from": ["robot.device_adapter"],
       "to": ["robot.dialogue"]
     },
     {
+      "event": "execution.cancelled",
+      "from": ["robot.device_adapter"],
+      "to": ["robot.dialogue", "robot.intelligence"]
+    },
+    {
+      "event": "observation.ready",
+      "from": ["robot.grounding_clarification"],
+      "to": ["robot.dialogue"]
+    },
+    {
+      "event": "interaction.classified",
+      "from": ["robot.instruction_understanding"],
+      "to": ["robot.dialogue"]
+    },
+    {
+      "event": "execution.accepted",
+      "from": ["robot.device_adapter"],
+      "to": ["robot.dialogue", "robot.intelligence"]
+    },
+    {
+      "event": "plan.failed",
+      "from": ["robot.task_planner"],
+      "to": ["robot.dialogue"]
+    },
+    {
+      "event": "transcript.delta",
+      "from": ["robot.stt"],
+      "to": ["robot.dialogue", "robot.interrupt_monitor"]
+    },
+    {
+      "event": "transcript.final",
+      "from": ["robot.stt"],
+      "to": ["robot.dialogue", "robot.interrupt_monitor"]
+    },
+    {
+      "event": "intent.created",
+      "to": ["robot.instruction_understanding", "robot.dialogue", "robot.intelligence"]
+    },
+    {
+      "event": "instruction.parsed",
+      "from": ["robot.instruction_understanding"],
+      "to": ["robot.grounding_clarification", "robot.dialogue"]
+    },
+    {
+      "event": "command.grounded",
+      "from": ["robot.grounding_clarification"],
+      "to": ["robot.task_planner", "robot.dialogue"]
+    },
+    {
+      "event": "clarification.requested",
+      "from": ["robot.grounding_clarification"],
+      "to": ["robot.dialogue"]
+    },
+    {
+      "event": "plan.proposed",
+      "from": ["robot.task_planner", "robot.intelligence"],
+      "to": ["robot.plan_validator"]
+    },
+    {
+      "event": "plan.validated",
+      "from": ["robot.plan_validator"],
+      "to": ["robot.loop_router"]
+    },
+    {
+      "event": "execution.profile.selected",
+      "from": ["robot.loop_router"],
+      "to": ["robot.execution_coordinator"]
+    },
+    {
+      "event": "plan.rejected",
+      "from": ["robot.plan_validator"],
+      "to": ["robot.dialogue", "robot.intelligence"]
+    },
+    {
+      "event": "interrupt.requested",
+      "from": ["robot.interrupt_monitor", "robot.intelligence"],
+      "to": ["robot.execution_coordinator", "robot.intelligence"]
+    },
+    {
+      "event": "robot.execute.requested",
+      "from": ["robot.execution_coordinator"],
+      "to": ["robot.device_adapter"]
+    },
+    {
+      "event": "execution.completed",
+      "from": ["robot.device_adapter"],
+      "to": ["robot.dialogue", "robot.intelligence"]
+    },
+    {
+      "event": "execution.failed",
+      "from": ["robot.device_adapter"],
+      "to": ["robot.dialogue", "robot.intelligence"]
+    },
+    {
+      "event": "execution.unknown",
+      "from": ["robot.device_adapter"],
+      "to": ["robot.dialogue", "robot.intelligence"]
+    },
+    {
+      "event": "conversation.requested",
+      "from": ["robot.instruction_understanding"],
+      "to": ["robot.dialogue"]
+    },
+    {
+      "event": "execution.progress",
+      "from": ["robot.device_adapter"],
+      "to": ["robot.dialogue", "robot.intelligence"]
+    },
+    {
       "event": "execution.started",
-      "from": [
-        "robot.device_adapter"
-      ],
-      "to": [
-        "robot.dialogue"
-      ]
+      "from": ["robot.device_adapter"],
+      "to": ["robot.dialogue", "robot.intelligence"]
     },
     {
       "event": "perception.observed",
       "from": ["robot.device_adapter"],
       "to": ["robot.vision"]
+    },
+    {
+      "event": "intelligence.reply",
+      "from": ["robot.intelligence"],
+      "to": ["robot.dialogue"]
+    },
+    {
+      "event": "perception.reported",
+      "from": ["robot.vision"],
+      "to": ["robot.intelligence"]
     }
   ]
 }

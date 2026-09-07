@@ -22,7 +22,7 @@ export default defineConfig({
       "/api": {
         target: process.env.ARENA_PROXY_TARGET ?? "http://localhost:7861",
       },
-      "/v1/robot": {
+      "/v1": {
         target: backendTarget,
       },
     },

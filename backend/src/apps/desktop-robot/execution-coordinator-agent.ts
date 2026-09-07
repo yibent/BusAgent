@@ -72,7 +72,8 @@ export class ExecutionCoordinatorNode implements InProcessAgent, OnModuleInit {
     )
       return;
     const taskId = context.event.taskId ?? `task_${context.event.correlationId}`;
-    if (context.event.eventType === 'interrupt.requested') cancelPendingIntent(context.event.correlationId);
+    if (context.event.eventType === 'interrupt.requested')
+      cancelPendingIntent(context.event.correlationId);
     const taskVersion = context.event.taskVersion ?? 1;
     const validated =
       context.event.eventType === 'interrupt.requested'
@@ -99,7 +100,7 @@ export class ExecutionCoordinatorNode implements InProcessAgent, OnModuleInit {
     const idempotencyKey =
       context.event.eventType === 'interrupt.requested'
         ? `interrupt:${context.event.eventId}`
-        : `execute:${taskId}:v${taskVersion}`;
+        : `execute:${taskId}:v${taskVersion}${validated.plan.queue_goal_id ? `:d${validated.plan.dispatch_attempt ?? 1}` : ''}`;
     await context.publish({
       event_type: 'robot.execute.requested',
       correlation_id: context.event.correlationId,

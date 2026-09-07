@@ -1,3 +1,6 @@
+import { TaskEngine } from './apps/desktop-robot/intelligence/task-engine.js';
+import { ModelConfig } from './apps/desktop-robot/intelligence/model-config.js';
+import { intelligenceRoutes } from './apps/desktop-robot/intelligence/http.js';
 import 'reflect-metadata';
 import { loadEnv } from './config/load-env.js';
 import { Logger } from './common/logger.js';
@@ -80,6 +83,8 @@ async function bootstrap(): Promise<void> {
       .header('content-type', result.contentType)
       .send(result.body);
   });
+
+  intelligenceRoutes(fastify, app.get(TaskEngine), app.get(ModelConfig));
 
   await app.listen(config.port, '0.0.0.0');
   audio.attach(fastify.server, '/v1/stt');
