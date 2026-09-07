@@ -1,6 +1,13 @@
 import { IntelligencePanel } from "@/components/workbench/IntelligencePanel";
 import { useCallback, useEffect, useState } from "react";
-import { Boxes, CircleHelp, LayoutPanelTop, Settings2, X } from "lucide-react";
+import {
+  Boxes,
+  CircleHelp,
+  LayoutPanelTop,
+  Settings2,
+  Trophy,
+  X,
+} from "lucide-react";
 import { useConversation } from "@/hooks/useConversation";
 import { useRobotStatus } from "@/hooks/useRobotStatus";
 import { useWorkspace } from "@/hooks/useWorkspace";
@@ -26,11 +33,18 @@ import { Logo } from "@/components/workbench/Logo";
 import { editWorkspace, runCommand } from "@/lib/workspace-api";
 import type { TimelineClip } from "@/lib/timeline";
 import "@/workbench.css";
+import {
+  ReviewPresentation,
+  isReviewLive,
+} from "@/components/workbench/ReviewPresentation";
 export function WorkbenchPage() {
   const conversation = useConversation();
   const robot = useRobotStatus();
   const { workspace, error, refresh } = useWorkspace();
-  const [page, setPage] = useState<"scenes" | "simulation">("scenes");
+  const [page, setPage] = useState<"review" | "scenes" | "simulation">(
+    "review",
+  );
+  const [reviewStep, setReviewStep] = useState(0);
   const [selectedScene, setSelectedScene] = useState<string | null>(null);
   const [enteredScene, setEnteredScene] = useState<string | null>(null);
   const [selectedClip, setSelectedClip] = useState<TimelineClip | null>(null);
@@ -49,13 +63,22 @@ export function WorkbenchPage() {
     const abort = new AbortController();
     const update = async () => {
       try {
-        const response = await fetch('/v1/tasks/status', { signal: abort.signal, cache: 'no-store' });
-        if (response.ok) setQueuePaused((await response.json()).paused === true);
-      } catch { /* Existing connection indicator handles network outages. */ }
+        const response = await fetch("/v1/tasks/status", {
+          signal: abort.signal,
+          cache: "no-store",
+        });
+        if (response.ok)
+          setQueuePaused((await response.json()).paused === true);
+      } catch {
+        /* Existing connection indicator handles network outages. */
+      }
     };
     void update();
     const timer = setInterval(() => void update(), 2000);
-    return () => { abort.abort(); clearInterval(timer); };
+    return () => {
+      abort.abort();
+      clearInterval(timer);
+    };
   }, []);
   const perform = useCallback(
     async (action: () => Promise<unknown>, message: string) => {
@@ -95,31 +118,176 @@ export function WorkbenchPage() {
       setBusy(false);
     }
     setEnteredScene(selectedScene);
-    setPage("simulation");
+    if (page === "review") setReviewStep(8);
+    else setPage("simulation");
     setNotice(null);
   };
   const selectClip = useCallback((clip: TimelineClip) => {
     setSelectedClip(clip);
     setTab("node");
   }, []);
+  const surface =
+    page === "scenes" || (page === "review" && reviewStep === 7) ? (
+      <SceneBrowser
+        workspace={workspace}
+        error={error}
+        selected={selectedScene}
+        onSelect={setSelectedScene}
+        onEnter={() => void enterScene()}
+        loading={busy}
+        onRefresh={() => void refresh()}
+      />
+    ) : (
+      <>
+        <main className="editor-workspace">
+          <ResizablePanelGroup
+            direction="vertical"
+            key={`${layoutVersion}-${page === "review" ? reviewStep : "workspace"}`}
+          >
+            <ResizablePanel
+              defaultSize={
+                page === "review" ? (reviewStep === 3 ? 25 : 70) : 55
+              }
+              minSize={20}
+            >
+              <ResizablePanelGroup direction="horizontal">
+                <ResizablePanel defaultSize={26} minSize={21} maxSize={75}>
+                  <Inspector
+                    tab={tab}
+                    onTab={setTab}
+                    selected={selectedClip}
+                    workspace={workspace}
+                    status={robot.status}
+                    messages={conversation.messages}
+                    busy={busy}
+                    onObjectSave={async (id, values) =>
+                      perform(
+                        () => editWorkspace("object", { id, ...values }),
+                        "物体位置与旋转已应用。",
+                      )
+                    }
+                    onConfigSave={(values) =>
+                      perform(
+                        () => editWorkspace("controller", values),
+                        "机械臂执行参数已应用。",
+                      )
+                    }
+                    onRefresh={refresh}
+                    onRobotSave={(values) =>
+                      perform(
+                        () => editWorkspace("robot", values),
+                        "机械臂已移动到目标位姿",
+                      )
+                    }
+                    onGripper={(state) =>
+                      perform(
+                        () => editWorkspace("gripper", { state }),
+                        state === "open" ? "夹爪已打开" : "夹爪已闭合",
+                      )
+                    }
+                  />
+                </ResizablePanel>
+                <ResizableHandle />
+                <ResizablePanel minSize={25}>
+                  <CameraPreview
+                    busy={busy}
+                    canEdit={!!workspace?.available}
+                    onStop={() => {
+                      void runCommand("stop")
+                        .then(() =>
+                          setNotice({
+                            text: "已发送中断请求，机械臂将停止当前动作。",
+                            error: false,
+                          }),
+                        )
+                        .catch((e) =>
+                          setNotice({ text: e.message, error: true }),
+                        );
+                    }}
+                    onReset={(scope) =>
+                      void perform(
+                        () =>
+                          scope === "home"
+                            ? runCommand("home")
+                            : editWorkspace("reset", { scope }),
+                        scope === "home"
+                          ? "机械臂已回到待机位置。"
+                          : "初始状态已恢复，时间轴保留。",
+                      )
+                    }
+                  />
+                </ResizablePanel>
+              </ResizablePanelGroup>
+            </ResizablePanel>
+            <ResizableHandle />
+            <ResizablePanel
+              defaultSize={
+                page === "review" ? (reviewStep === 3 ? 75 : 30) : 45
+              }
+              minSize={25}
+            >
+              <Timeline
+                events={conversation.robotEvents}
+                selectedId={selectedClip?.id}
+                onSelect={selectClip}
+                onUpdate={setSelectedClip}
+                onClear={() => {
+                  conversation.clearRobotEvents();
+                  setSelectedClip(null);
+                }}
+              />
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        </main>
+        <footer className="app-statusbar">
+          <span>
+            <i className={`dot ${!conversation.connected ? "" : "fast"}`} />
+            BusAgent{" "}
+            <small>{!conversation.connected ? "连接中断" : "会话已连接"}</small>
+          </span>
+          <span>
+            刘工智能工作台<span className="statusbar-separator">/</span>
+            Franka Panda
+          </span>
+          <span>
+            {robot.lastUpdated
+              ? `状态更新 ${new Date(robot.lastUpdated).toLocaleTimeString("zh-CN", { hour12: false })}`
+              : "等待状态"}
+          </span>
+        </footer>
+      </>
+    );
   return (
     <TooltipProvider delayDuration={400}>
-      <div className="workbench dark">
+      <div
+        className={`workbench dark ${page === "review" ? "review-mode" : ""}`}
+      >
         <header className="app-header">
           <a
             className="brand"
             href="/"
             onClick={(e) => {
               e.preventDefault();
-              setPage("scenes");
+              setPage("review");
+              setReviewStep(0);
             }}
-            aria-label="刘工智能场景首页"
+            aria-label="刘工智能评审首页"
           >
             <Logo className="brand-logo" />
             <strong>刘工智能</strong>
             <span className="brand-edition">STUDIO</span>
           </a>
           <nav className="main-navigation" aria-label="主导航">
+            <button
+              className={page === "review" ? "active" : ""}
+              onClick={() => {
+                setPage("review");
+                setReviewStep(0);
+              }}
+            >
+              <Trophy size={14} />
+              挑战杯评审
+            </button>
             <button
               className={page === "scenes" ? "active" : ""}
               onClick={() => setPage("scenes")}
@@ -182,129 +350,36 @@ export function WorkbenchPage() {
             </Button>
           </div>
         </header>
-        {page === "scenes" ? (
-          <SceneBrowser
-            workspace={workspace}
-            error={error}
-            selected={selectedScene}
-            onSelect={setSelectedScene}
-            onEnter={() => void enterScene()}
-            loading={busy}
-            onRefresh={() => void refresh()}
-          />
+        {page === "review" ? (
+          <ReviewPresentation
+            step={reviewStep}
+            onStep={setReviewStep}
+            onFinish={() => {
+              if (workspace?.available) {
+                setEnteredScene(workspace.scene_id);
+                setSelectedScene(workspace.scene_id);
+                setPage("simulation");
+              } else setPage("scenes");
+            }}
+          >
+            {isReviewLive(reviewStep) ? surface : null}
+          </ReviewPresentation>
         ) : (
-          <>
-            <main className="editor-workspace">
-              <ResizablePanelGroup direction="vertical" key={layoutVersion}>
-                <ResizablePanel defaultSize={55} minSize={32}>
-                  <ResizablePanelGroup direction="horizontal">
-                    <ResizablePanel defaultSize={26} minSize={21} maxSize={75}>
-                      <Inspector
-                        tab={tab}
-                        onTab={setTab}
-                        selected={selectedClip}
-                        workspace={workspace}
-                        status={robot.status}
-                        messages={conversation.messages}
-                        busy={busy}
-                        onObjectSave={async (id, values) =>
-                          perform(
-                            () => editWorkspace("object", { id, ...values }),
-                            "物体位置与旋转已应用。",
-                          )
-                        }
-                        onConfigSave={(values) =>
-                          perform(
-                            () => editWorkspace("controller", values),
-                            "机械臂执行参数已应用。",
-                          )
-                        }
-                        onRefresh={refresh}
-                        onRobotSave={(values) =>
-                          perform(
-                            () => editWorkspace("robot", values),
-                            "机械臂已移动到目标位姿",
-                          )
-                        }
-                        onGripper={(state) =>
-                          perform(
-                            () => editWorkspace("gripper", { state }),
-                            state === "open" ? "夹爪已打开" : "夹爪已闭合",
-                          )
-                        }
-                      />
-                    </ResizablePanel>
-                    <ResizableHandle />
-                    <ResizablePanel minSize={25}>
-                      <CameraPreview
-                        busy={busy}
-                        canEdit={!!workspace?.available}
-                        onStop={() => {
-                          void runCommand("stop")
-                            .then(() =>
-                              setNotice({
-                                text: "已发送中断请求，机械臂将停止当前动作。",
-                                error: false,
-                              }),
-                            )
-                            .catch((e) =>
-                              setNotice({ text: e.message, error: true }),
-                            );
-                        }}
-                        onReset={(scope) =>
-                          void perform(
-                            () =>
-                              scope === "home"
-                                ? runCommand("home")
-                                : editWorkspace("reset", { scope }),
-                            scope === "home"
-                              ? "机械臂已回到待机位置。"
-                              : "初始状态已恢复，时间轴保留。",
-                          )
-                        }
-                      />
-                    </ResizablePanel>
-                  </ResizablePanelGroup>
-                </ResizablePanel>
-                <ResizableHandle />
-                <ResizablePanel defaultSize={45} minSize={25}>
-                  <Timeline
-                    events={conversation.robotEvents}
-                    selectedId={selectedClip?.id}
-                    onSelect={selectClip}
-                    onUpdate={setSelectedClip}
-                    onClear={() => {
-                      conversation.clearRobotEvents();
-                      setSelectedClip(null);
-                    }}
-                  />
-                </ResizablePanel>
-              </ResizablePanelGroup>
-            </main>
-            <footer className="app-statusbar">
-              <span>
-                <i className={`dot ${!conversation.connected ? "" : "fast"}`} />
-                BusAgent{" "}
-                <small>
-                  {!conversation.connected ? "连接中断" : "会话已连接"}
-                </small>
-              </span>
-              <span>
-                刘工智能工作台<span className="statusbar-separator">/</span>
-                Franka Panda
-              </span>
-              <span>
-                {robot.lastUpdated
-                  ? `状态更新 ${new Date(robot.lastUpdated).toLocaleTimeString("zh-CN", { hour12: false })}`
-                  : "等待状态"}
-              </span>
-            </footer>
-          </>
+          surface
         )}
-        <VoiceOrb
-          conversation={conversation}
-          disabled={page !== "simulation"}
-        />
+        <div
+          hidden={
+            page === "review" &&
+            !isReviewLive(reviewStep) &&
+            !conversation.isListening &&
+            !conversation.isSpeaking
+          }
+        >
+          <VoiceOrb
+            conversation={conversation}
+            disabled={!workspace?.available}
+          />
+        </div>
         {notice && (
           <div
             className={`app-notice ${notice.error ? "error" : ""}`}

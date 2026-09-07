@@ -4,11 +4,17 @@ import type { ReactNode } from "react";
 export const Dialog = Primitive.Root;
 export const DialogTitle = Primitive.Title;
 export const DialogDescription = Primitive.Description;
-export function DialogContent({ children }: { children: ReactNode }) {
+export function DialogContent({
+  children,
+  className = "",
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
   return (
     <Primitive.Portal>
       <Primitive.Overlay className="ui-dialog-overlay" />
-      <Primitive.Content className="ui-dialog-content">
+      <Primitive.Content className={`ui-dialog-content ${className}`}>
         {children}
         <Primitive.Close className="icon-button dialog-close" aria-label="关闭">
           <X size={16} />

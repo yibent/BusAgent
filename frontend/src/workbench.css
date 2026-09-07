@@ -169,7 +169,8 @@ p {
 }
 .header-right button {
   height: 28px;
-  width: 28px;
+  width: auto;
+  min-width: 28px;
 }
 .header-right svg {
   width: 14px;
