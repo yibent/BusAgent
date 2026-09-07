@@ -32,6 +32,8 @@ type Settings = {
     requestTimeoutMs: number;
     planningBudgetMs: number;
     toolRounds: number;
+    contextBudgetTokens?: number;
+    toolResultBudgetTokens?: number;
   };
 };
 type Step = {
@@ -300,26 +302,35 @@ export function IntelligencePanel({
                 />
               </label>
               <div className="model-role-grid">
-                {(["planner", "supervisor", "dialogue"] as const).map((role) => (
-                  <label key={role}>
-                    {role === "planner" ? "任务规划模型" : role === "supervisor" ? "任务监督模型" : "即时回答模型"}
-                    <select
-                      value={settings.roles[role] ?? settings.roles.planner}
-                      onChange={(e) =>
-                        setSettings({
-                          ...settings,
-                          roles: { ...settings.roles, [role]: e.target.value },
-                        })
-                      }
-                    >
-                      {settings.profiles.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                ))}
+                {(["planner", "supervisor", "dialogue"] as const).map(
+                  (role) => (
+                    <label key={role}>
+                      {role === "planner"
+                        ? "任务规划模型"
+                        : role === "supervisor"
+                          ? "任务监督模型"
+                          : "即时回答模型"}
+                      <select
+                        value={settings.roles[role] ?? settings.roles.planner}
+                        onChange={(e) =>
+                          setSettings({
+                            ...settings,
+                            roles: {
+                              ...settings.roles,
+                              [role]: e.target.value,
+                            },
+                          })
+                        }
+                      >
+                        {settings.profiles.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ),
+                )}
               </div>
               <label className="check-label">
                 <input
@@ -370,9 +381,14 @@ export function IntelligencePanel({
                 <input
                   type="checkbox"
                   checked={settings.supervisorEnabled !== false}
-                  onChange={(e) => setSettings({ ...settings, supervisorEnabled: e.target.checked })}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      supervisorEnabled: e.target.checked,
+                    })
+                  }
                 />
-                自动监督 LLM（关闭后由人工核验，保留物理执行检查）
+                自动监督 LLM（关闭后正常队列继续，未解决的异常等待人工核验）
               </label>
               <label className="check-label">
                 <input
@@ -391,6 +407,44 @@ export function IntelligencePanel({
                 运动期间提前规划独立的下一条任务
               </label>
               <div className="model-role-grid">
+                <label>
+                  单次输入上下文预算（估算 tokens）
+                  <input
+                    type="number"
+                    min={6000}
+                    max={128000}
+                    step={1000}
+                    value={settings.performance.contextBudgetTokens ?? 12000}
+                    onChange={(e) =>
+                      setSettings({
+                        ...settings,
+                        performance: {
+                          ...settings.performance,
+                          contextBudgetTokens: Number(e.target.value),
+                        },
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  单个工具结果预算（估算 tokens）
+                  <input
+                    type="number"
+                    min={512}
+                    max={12000}
+                    step={256}
+                    value={settings.performance.toolResultBudgetTokens ?? 1600}
+                    onChange={(e) =>
+                      setSettings({
+                        ...settings,
+                        performance: {
+                          ...settings.performance,
+                          toolResultBudgetTokens: Number(e.target.value),
+                        },
+                      })
+                    }
+                  />
+                </label>
                 <label>
                   单次模型等待上限（秒）
                   <input

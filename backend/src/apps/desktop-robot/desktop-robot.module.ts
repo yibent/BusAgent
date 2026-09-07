@@ -2,6 +2,7 @@ import { PersistenceModule } from '../../persistence/persistence.module.js';
 import { QueueStore } from './intelligence/queue-store.js';
 import { ModelConfigModule } from './intelligence/model-config.module.js';
 import { TaskEngine } from './intelligence/task-engine.js';
+import { PlanningAgent, SupervisionAgent } from './intelligence/inference-agents.js';
 import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '../../config/config.module.js';
 import { RuntimeModule } from '../../app/runtime.module.js';
@@ -40,6 +41,8 @@ import { RobotControlProxy } from './robot-control-proxy.js';
   providers: [
     QueueStore,
     TaskEngine,
+    PlanningAgent,
+    SupervisionAgent,
     InterruptMonitorNode,
     InstructionUnderstandingNode,
     GroundingClarificationNode,

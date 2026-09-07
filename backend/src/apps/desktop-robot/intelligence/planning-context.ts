@@ -100,34 +100,56 @@ function observation(value: unknown): unknown {
 }
 
 export function planningGoal(goal: Goal): unknown {
-  return planningEvidence({
-    ...goal,
-    steps: goal.steps.slice(-32).map((step) => {
-      const wrapper = object(step.result);
-      const result = object(wrapper.result ?? wrapper);
-      return {
-        ...step,
-        result: pick(result, [
-          'ok',
-          'state',
-          'failure',
-          'holding',
-          'evaluation',
-          'postconditions',
-          'post_action_snapshot',
-          'review_required',
-          'review_reason',
-          'command_id',
-          'elapsed_s',
-        ]),
-        result_message: text(result.message).slice(0, 400),
-        observation_ref: object(result.vision).request_id,
-      };
-    }),
-    earlier_step_count: Math.max(0, goal.steps.length - 32),
-    completed_step_count: goal.steps.filter((step) => step.state === 'completed')
-      .length,
-  });
+  const active = goal.steps.filter((s) =>
+    ['pending', 'running', 'dispatching', 'unknown', 'failed'].includes(s.state),
+  );
+  const recent = goal.steps.filter((s) => s.state === 'completed').slice(-3);
+  const selected = [...new Set([...recent, ...active.slice(0, 8)])];
+  return {
+    ...(planningEvidence({
+      id: goal.id,
+      state: goal.state,
+      revision: goal.revision,
+      mode: goal.mode,
+      plan_scope: goal.plan_scope,
+      review_kind: goal.review_kind,
+      review_reason: goal.review_reason,
+      recovery_count: goal.recovery_count,
+      steps: selected.map((step) => {
+        const wrapper = object(step.result);
+        const result = object(wrapper.result ?? wrapper);
+        return {
+          id: step.id,
+          title: step.title,
+          skill: step.skill,
+          state: step.state,
+          params: step.state === 'completed' ? undefined : step.params,
+          command_id: step.command_id,
+          result: pick(result, [
+            'ok',
+            'state',
+            'failure',
+            'holding',
+            'evaluation',
+            'postconditions',
+            'review_required',
+            'review_reason',
+            'command_id',
+            'elapsed_s',
+          ]),
+          result_message: text(result.message).slice(0, 400),
+          observation_ref: object(result.vision).request_id,
+        };
+      }),
+      omitted_step_count: Math.max(0, goal.steps.length - selected.length),
+      completed_step_count: goal.steps.filter((step) => step.state === 'completed')
+        .length,
+    }) as Record<string, unknown>),
+    // Never truncate/compact user constraints through semanticEvidence's generic string limit.
+    source: goal.source,
+    summary: goal.summary,
+    completion: goal.completion,
+  };
 }
 
 /** The full evidence stays in Bus/MySQL. LLMs receive the facts needed to decide. */
@@ -146,11 +168,46 @@ export function planningEvidence(value: unknown): unknown {
             [
               key,
               {
-                ...world,
+                ...pick(world, ['revision', 'complete', 'source', 'stale_means']),
+                objects: (Array.isArray(world.objects) ? world.objects : []).map(
+                  (raw) =>
+                    pick(object(raw), [
+                      'track_id',
+                      'ref',
+                      'label',
+                      'labels',
+                      'references',
+                      'current',
+                      'state',
+                      'association_candidates',
+                      'position_m',
+                      'extent_m',
+                      'placement',
+                      'observation_ref',
+                      'observed_at',
+                    ]),
+                ),
                 collections: (Array.isArray(world.collections)
                   ? world.collections
                   : []
-                ).map(collection),
+                ).map((raw) => {
+                  const c = object(raw);
+                  return Array.isArray(world.objects)
+                    ? {
+                        ...pick(c, [
+                          'label',
+                          'count',
+                          'complete',
+                          'observed_at',
+                          'observation_ref',
+                          'groups',
+                        ]),
+                        members: (Array.isArray(c.instances) ? c.instances : []).map(
+                          (i) => object(i).track_id,
+                        ),
+                      }
+                    : collection(c);
+                }),
               },
             ],
           ];

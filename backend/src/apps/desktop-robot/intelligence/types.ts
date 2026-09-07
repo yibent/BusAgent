@@ -38,9 +38,28 @@ export const decisionSchema = z.object({
     .enum(['continue', 'complete', 'blocked', 'clarify', 'chat'])
     .default('continue'),
   message: z.string().default(''),
+  plan_scope: z.enum(['complete', 'stage']).optional(),
 });
 export type Decision = z.infer<typeof decisionSchema>;
+export const reviewSchema = z.object({
+  verdict: z.enum(['continue', 'repair', 'complete', 'blocked']),
+  reason: z.string(),
+  evidence_refs: z.array(z.string()).default([]),
+  actions: z.array(actionSchema).default([]),
+  plan_scope: z.enum(['complete', 'stage']).optional(),
+});
 export interface QueueStep extends Action {
+  recovery?: {
+    kind: 'verify_cell' | 'relocalize';
+    parent_id: string;
+    key: string;
+    cell_id?: string;
+    row?: number;
+    column?: number;
+    object_id?: string;
+    field?: 'target' | 'destination';
+  };
+  recovery_root?: string;
   runtime_id?: string;
   id: string;
   state: StepState;
@@ -55,6 +74,15 @@ export interface QueueStep extends Action {
   cancel_requested?: boolean;
 }
 export interface Goal {
+  local_recoveries?: string[];
+  plan_scope?: 'complete' | 'stage';
+  review_kind?: 'continuation' | 'verification' | 'failure';
+  inference_request?: {
+    id: string;
+    role: Role;
+    revision: number;
+    requested_at: string;
+  };
   planning_ahead?: string;
   proposal?: Action[];
   interaction?: boolean;
@@ -76,6 +104,7 @@ export interface Goal {
   revision: number;
 }
 export interface SceneState {
+  world?: Record<string, unknown>;
   runtime_id?: string;
   observed_at?: string;
   observation?: Record<string, unknown>;

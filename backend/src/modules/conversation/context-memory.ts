@@ -232,7 +232,11 @@ export class ContextMemory {
       ),
     ]);
     const state = queue[0][0] ? (decode(queue[0][0].payload) as QueueState) : undefined;
-    return compactContext(history.entries, state ? taskMemory(state) : {}, budget);
+    return {
+      ...compactContext(history.entries, state ? taskMemory(state) : {}, budget),
+      older_history_available: history.has_more,
+      archive_before: 'before' in history ? history.before : undefined,
+    };
   }
 
   async history(

@@ -165,6 +165,16 @@
       "agent_id": "robot.intelligence",
       "required": true,
       "config": {}
+    },
+    {
+      "agent_id": "robot.planning",
+      "required": true,
+      "config": {}
+    },
+    {
+      "agent_id": "robot.supervision",
+      "required": true,
+      "config": {}
     }
   ],
   "routes": [
@@ -300,6 +310,21 @@
     {
       "event": "perception.reported",
       "from": ["robot.vision"],
+      "to": ["robot.intelligence"]
+    },
+    {
+      "event": "planning.requested",
+      "from": ["robot.intelligence"],
+      "to": ["robot.planning"]
+    },
+    {
+      "event": "supervision.requested",
+      "from": ["robot.intelligence"],
+      "to": ["robot.supervision"]
+    },
+    {
+      "event": "intelligence.decision.proposed",
+      "from": ["robot.planning", "robot.supervision"],
       "to": ["robot.intelligence"]
     }
   ]

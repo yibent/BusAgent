@@ -129,6 +129,13 @@ const MIGRATIONS: Migration[] = [
       `CREATE TABLE IF NOT EXISTS busagent_goal_outbox (sequence_id BIGINT AUTO_INCREMENT PRIMARY KEY, id VARCHAR(160) NOT NULL UNIQUE, payload JSON NOT NULL, sent TINYINT NOT NULL DEFAULT 0, INDEX idx_goal_outbox_sent (sent, sequence_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
     ],
   },
+  {
+    version: 3,
+    name: 'retrievable_inference_evidence',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS busagent_context_evidence (id VARCHAR(128) PRIMARY KEY, goal_id VARCHAR(128) NOT NULL, payload JSON NOT NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, INDEX idx_context_evidence_goal (goal_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    ],
+  },
 ];
 
 /** Applies versioned migrations; MySQL is the source of truth for recovery. */

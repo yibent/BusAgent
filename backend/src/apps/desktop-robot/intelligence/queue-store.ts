@@ -23,6 +23,20 @@ const decode = (value: unknown): QueueState =>
 @Injectable()
 export class QueueStore implements TaskStore {
   constructor(private readonly db: DatabaseConnection) {}
+  async archiveEvidence(goalId: string, ref: string, value: unknown): Promise<void> {
+    await this.db.pool.query(
+      'INSERT IGNORE INTO busagent_context_evidence (id, goal_id, payload) VALUES (?, ?, ?)',
+      [ref, goalId, JSON.stringify(value)],
+    );
+  }
+  async readEvidence(goalId: string, ref: string): Promise<unknown> {
+    const [rows] = await this.db.pool.query<RowDataPacket[]>(
+      'SELECT payload FROM busagent_context_evidence WHERE id = ? AND goal_id = ?',
+      [ref, goalId],
+    );
+    const value: unknown = rows[0]?.payload;
+    return typeof value === 'string' ? JSON.parse(value) : value;
+  }
   async read(): Promise<QueueState> {
     const [rows] = await this.db.pool.query<RowDataPacket[]>(
       'SELECT payload FROM busagent_goal_queue WHERE id = ?',

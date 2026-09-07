@@ -263,14 +263,17 @@
         "execution.unknown",
         "execution.cancelled",
         "plan.rejected",
-        "perception.reported"
+        "perception.reported",
+        "intelligence.decision.proposed"
       ],
       "produces": [
         "plan.proposed",
         "intelligence.reply",
         "intelligence.observed",
         "interrupt.requested",
-        "task.cancelled"
+        "task.cancelled",
+        "planning.requested",
+        "supervision.requested"
       ],
       "configuration_schema": "schemas/intelligence-config.json",
       "concurrency": {
@@ -280,6 +283,54 @@
       "retry": {
         "max_attempts": 2,
         "backoff_ms": 500,
+        "dead_letter": true
+      },
+      "permissions": {
+        "context": ["task.*", "conversation.*", "perception.*"],
+        "side_effects": []
+      }
+    },
+    {
+      "agent_id": "robot.planning",
+      "endpoint": {
+        "adapter": "in-process",
+        "registration_key": "PlanningAgentNode"
+      },
+      "consumes": ["planning.requested"],
+      "produces": ["intelligence.decision.proposed"],
+      "configuration_schema": "schemas/intelligence-config.json",
+      "concurrency": {
+        "mode": "partitioned",
+        "partition_key": "goal_id",
+        "limit": 2
+      },
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 0,
+        "dead_letter": true
+      },
+      "permissions": {
+        "context": ["task.*", "conversation.*", "perception.*"],
+        "side_effects": []
+      }
+    },
+    {
+      "agent_id": "robot.supervision",
+      "endpoint": {
+        "adapter": "in-process",
+        "registration_key": "SupervisionAgentNode"
+      },
+      "consumes": ["supervision.requested"],
+      "produces": ["intelligence.decision.proposed"],
+      "configuration_schema": "schemas/intelligence-config.json",
+      "concurrency": {
+        "mode": "partitioned",
+        "partition_key": "goal_id",
+        "limit": 2
+      },
+      "retry": {
+        "max_attempts": 1,
+        "backoff_ms": 0,
         "dead_letter": true
       },
       "permissions": {

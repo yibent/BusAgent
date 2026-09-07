@@ -73,8 +73,8 @@ describe('short-context visual grounding', () => {
       call,
     );
     expect(r.box_normalized).toEqual([0.5, 0.3, 0.56, 0.36]);
-    expect(call.mock.calls[0][1]).toHaveLength(1);
-    expect(JSON.stringify(call.mock.calls[0][1])).toContain(
+    expect(call.mock.calls[0]![1]).toHaveLength(1);
+    expect(JSON.stringify(call.mock.calls[0]![1])).toContain(
       'part inside the lower bin',
     );
     expect(record).toHaveBeenCalledWith(

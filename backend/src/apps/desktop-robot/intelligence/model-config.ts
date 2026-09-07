@@ -39,6 +39,8 @@ const configSchema = z.object({
       requestTimeoutMs: z.number().int().min(1000).max(120000).default(20000),
       planningBudgetMs: z.number().int().min(5000).max(300000).default(60000),
       toolRounds: z.number().int().min(1).max(16).default(6),
+      contextBudgetTokens: z.number().int().min(6000).max(128000).optional(),
+      toolResultBudgetTokens: z.number().int().min(512).max(12000).optional(),
     })
     .default({}),
   images: z.boolean().default(true),

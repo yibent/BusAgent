@@ -1,4 +1,5 @@
 import { canPrepareAhead, independentAhead } from './lookahead.js';
+import { recoveryObservation, resolveRecovery } from './local-recovery.js';
 import {
   compactContext,
   ContextMemory,
@@ -191,6 +192,7 @@ export function applyResult(
   step.result = record(semanticEvidence(payload));
   const result = record(payload.result ?? payload);
   if (result.holding) state.scene.holding = record(semanticEvidence(result.holding));
+  if (result.world) state.scene.world = record(semanticEvidence(result.world));
   if (result.vision) {
     state.scene.observation = record(semanticEvidence(result.vision));
     state.scene.observed_at = now();
@@ -198,10 +200,15 @@ export function applyResult(
   step.finished_at = now();
   goal.updated_at = now();
   if (ended(goal) || goal.state === 'paused') return goal;
+  if (resolveRecovery(goal, step, state, (action) => stepsFor([action])[0]!))
+    return goal;
   if (terminal === 'completed') {
     if (['grasp', 'pick_place', 'place_held'].includes(step.skill))
       goal.recovery_count = 0;
     goal.state = step.review_after || result.review_required ? 'review' : 'running';
+    if (result.review_required) goal.review_kind = 'verification';
+    else if (step.review_after) goal.review_kind = 'continuation';
+    else delete goal.review_kind;
     goal.review_reason = result.review_required
       ? typeof result.review_reason === 'string'
         ? result.review_reason
@@ -211,6 +218,7 @@ export function applyResult(
         : '';
   } else {
     goal.state = 'review';
+    goal.review_kind = 'failure';
     goal.review_reason = `步骤“${step.title}”结果 ${terminal}；保留后续任务，根据当前持物和观测决定恢复。`;
   }
   return goal;
@@ -226,6 +234,7 @@ export class TaskEngine
   private ticking = false;
   private job: { id: string; abort: AbortController } | undefined;
   private intakeJobs = new Map<string, AbortController>();
+  private inferenceJobs = new Set<string>();
   private ahead:
     | {
         goal: Goal;
@@ -413,7 +422,38 @@ export class TaskEngine
   async handle(context: InProcessEventContext) {
     if (!intelligenceEnabled()) return;
     const event = context.event;
-    if (event.eventType === 'intent.created') {
+    if (event.eventType === 'intelligence.decision.proposed') {
+      const payload = record(event.payload);
+      const state = await this.store.read();
+      const goal = state.goals.find((g) => g.id === payload.goal_id);
+      if (
+        !goal ||
+        !goal.inference_request ||
+        goal.inference_request.id !== payload.request_id ||
+        goal.revision !== payload.revision
+      )
+        return;
+      const role = goal.inference_request.role;
+      if (
+        event.sourceAgentId !==
+        (role === 'planner' ? 'robot.planning' : 'robot.supervision')
+      )
+        return;
+      try {
+        await this.acceptDecision(
+          goal,
+          role,
+          payload.decision as Decision,
+          record(payload.capabilities),
+        );
+      } catch (error) {
+        // The response is delivered asynchronously: the inference worker can
+        // already have returned. Do not leave a rejected proposal in planning.
+        await this.failInference(goal, error as Error);
+      } finally {
+        this.finishInference(goal.id);
+      }
+    } else if (event.eventType === 'intent.created') {
       const input = record(event.payload).text;
       const text = typeof input === 'string' ? input.trim() : '';
       if (!text) return;
@@ -554,6 +594,12 @@ export class TaskEngine
           goal.recovery_count = 0;
           goal.revision++;
           goal.review_reason = '用户恢复任务，先核对当前持物与已完成步骤。';
+          goal.review_kind = goal.steps.some((s) =>
+            ['failed', 'unknown'].includes(s.state),
+          )
+            ? 'failure'
+            : 'continuation';
+          delete goal.inference_request;
         }
         if (goal)
           for (const step of goal.steps)
@@ -574,6 +620,8 @@ export class TaskEngine
         goal.recovery_count = 0;
         goal.revision++;
         goal.state = 'review';
+        goal.review_kind = 'continuation';
+        delete goal.inference_request;
         goal.review_reason = '用户修改了任务，保留已完成动作并重规划剩余步骤。';
       } else if (goal) {
         if (goal.state !== 'queued') throw new Error('只能调整尚未开始的任务顺序。');
@@ -664,7 +712,16 @@ export class TaskEngine
       if (!this.restored) {
         await this.store.change((state) => {
           for (const g of state.goals)
-            if (g.state === 'planning') g.state = g.steps.length ? 'review' : 'queued';
+            if (g.state === 'planning') {
+              g.state = g.steps.length ? 'review' : 'queued';
+              g.revision++;
+              delete g.inference_request;
+              g.review_kind ??= g.steps.some((s) =>
+                ['failed', 'unknown'].includes(s.state),
+              )
+                ? 'failure'
+                : 'continuation';
+            }
         });
         this.restored = true;
       }
@@ -676,7 +733,7 @@ export class TaskEngine
       )) {
         if (this.intakeJobs.size >= 2) break;
         if (!this.intakeJobs.has(interaction.id))
-          this.startPlanning(interaction, state, 'planner', true);
+          this.startPlanning(interaction, 'planner', true);
       }
       const flight = state.goals.flatMap((g) => g.steps).find(inFlight);
       if (flight) {
@@ -697,8 +754,10 @@ export class TaskEngine
       }
       if (goal.state === 'queued' && (await this.useAhead(goal, state))) return;
       if (goal.state === 'queued' || goal.state === 'review') {
+        if (goal.state === 'review' && (await this.recoverLocally(goal, state))) return;
         if (
           goal.state === 'review' &&
+          goal.review_kind !== 'continuation' &&
           (await this.models.settings()).supervisorEnabled === false
         ) {
           const message =
@@ -712,8 +771,9 @@ export class TaskEngine
         }
         this.startPlanning(
           goal,
-          state,
-          goal.state === 'queued' ? 'planner' : 'supervisor',
+          goal.state === 'queued' || goal.review_kind === 'continuation'
+            ? 'planner'
+            : 'supervisor',
         );
         return;
       }
@@ -752,8 +812,11 @@ export class TaskEngine
         await this.store.change((current, emit) => {
           const g = current.goals.find((g) => g.id === goal.id);
           if (!g || g.state !== 'running') return;
-          if (g.mode === 'complex') {
+          if (
+            (g.plan_scope ?? (g.mode === 'complex' ? 'stage' : 'complete')) === 'stage'
+          ) {
             g.state = 'review';
+            g.review_kind = 'continuation';
             g.review_reason = '本阶段动作已结束，核对目标条件，继续展开或完成。';
           } else {
             g.state = 'completed';
@@ -845,6 +908,66 @@ export class TaskEngine
     await this.store.change((state) => {
       applyResult(state, step.task_id, eventType, result);
     });
+  }
+  private async recoverLocally(goal: Goal, state: QueueState): Promise<boolean> {
+    const proposal = recoveryObservation(goal, state);
+    if (!proposal) return false;
+    if (proposal.recovery.kind === 'verify_cell') {
+      const parent = goal.steps.find((s) => s.id === proposal.recovery.parent_id)!;
+      const ref = String(record(parent.params.destination).cell_ref);
+      try {
+        const observation = await readObservation(
+          this.base(),
+          ref.split(':')[1]!,
+          AbortSignal.timeout(3000),
+        );
+        const cell = (
+          Array.isArray(observation.references) ? observation.references : []
+        )
+          .map(record)
+          .find((r) => r.ref === ref);
+        if (!cell) return false;
+        if (typeof cell.cell_id === 'string') proposal.recovery.cell_id = cell.cell_id;
+        else {
+          proposal.recovery.row = Number(cell.row);
+          proposal.recovery.column = Number(cell.column);
+        }
+      } catch {
+        return false;
+      }
+    }
+    let applied = false;
+    await this.store.change((current, emit) => {
+      const g = current.goals.find((g) => g.id === goal.id);
+      if (
+        !g ||
+        g.revision !== goal.revision ||
+        g.state !== 'review' ||
+        current.paused ||
+        g.local_recoveries?.includes(proposal.recovery.key)
+      )
+        return;
+      const child = stepsFor([proposal])[0]!;
+      const next = g.steps.findIndex((s) => s.state === 'pending');
+      g.steps.splice(next < 0 ? g.steps.length : next, 0, child);
+      g.local_recoveries = [...(g.local_recoveries ?? []), proposal.recovery.key];
+      g.state = 'running';
+      g.message = proposal.title;
+      applied = true;
+      this.emit(
+        emit,
+        `recovery:${proposal.recovery.key}`,
+        'intelligence.observed',
+        g.conversation_id,
+        {
+          ...proposal.recovery,
+          recovery_kind: proposal.recovery.kind,
+          kind: 'local_recovery',
+          goal_id: g.id,
+        },
+      );
+    });
+    return applied;
   }
   private async prepareAhead(state: QueueState, flight: QueueStep) {
     if (state.paused || this.job || this.ahead) return;
@@ -995,28 +1118,119 @@ export class TaskEngine
     return true;
   }
 
-  private startPlanning(goal: Goal, state: QueueState, role: Role, intake = false) {
+  private startPlanning(goal: Goal, role: Role, intake = false) {
     const abort = new AbortController();
     if (intake) this.intakeJobs.set(goal.id, abort);
     else this.job = { id: goal.id, abort };
-    void this.runPlanning(goal, state, role, abort.signal)
-      .catch(async (error) => {
-        if (abort.signal.aborted) return;
-        await this.store.change((current, emit) => {
-          const g = current.goals.find((g) => g.id === goal.id);
-          if (!g || g.revision !== goal.revision || ended(g) || g.state === 'paused')
-            return;
-          g.state = 'blocked';
-          g.message = (error as Error).message;
-          g.updated_at = now();
-          this.reply(emit, g, `${g.message} 任务和已完成步骤已保留。`);
-        });
-      })
-      .finally(() => {
-        if (intake) this.intakeJobs.delete(goal.id);
-        else if (this.job?.id === goal.id) this.job = undefined;
+    void (async () => {
+      await this.store.change((state, emit) => {
+        const current = state.goals.find((g) => g.id === goal.id);
+        if (
+          !current ||
+          current.revision !== goal.revision ||
+          ended(current) ||
+          current.state === 'paused'
+        )
+          return;
+        const request = {
+          id: randomUUID(),
+          role,
+          revision: current.revision,
+          requested_at: now(),
+        };
+        current.inference_request = request;
+        current.state = 'planning';
+        this.emit(
+          emit,
+          `inference:${request.id}`,
+          role === 'planner' ? 'planning.requested' : 'supervision.requested',
+          goal.conversation_id,
+          { goal_id: goal.id, request_id: request.id, revision: goal.revision },
+        );
       });
+      await this.flush();
+    })().catch(async (error) => {
+      await this.failInference(goal, error as Error);
+      this.finishInference(goal.id);
+    });
   }
+
+  private finishInference(id: string) {
+    this.intakeJobs.delete(id);
+    if (this.job?.id === id) this.job = undefined;
+  }
+
+  private async failInference(goal: Goal, error: Error) {
+    await this.store.change((current, emit) => {
+      const g = current.goals.find((g) => g.id === goal.id);
+      if (!g || g.revision !== goal.revision || ended(g) || g.state === 'paused')
+        return;
+      delete g.inference_request;
+      g.state = 'blocked';
+      g.message = error.message;
+      g.updated_at = now();
+      this.reply(emit, g, `${g.message} 任务和已完成步骤已保留。`);
+    });
+  }
+
+  /** Called only by independently registered planner/supervisor Bus consumers. */
+  async handleInference(role: Role, context: InProcessEventContext) {
+    const payload = record(context.event.payload);
+    const state = await this.store.read();
+    const goal = state.goals.find((g) => g.id === payload.goal_id);
+    const request = goal?.inference_request;
+    if (
+      !goal ||
+      !request ||
+      request.id !== payload.request_id ||
+      request.role !== role ||
+      goal.revision !== payload.revision ||
+      ended(goal) ||
+      goal.state === 'paused' ||
+      this.inferenceJobs.has(request.id)
+    )
+      return;
+    if (
+      role === 'supervisor' &&
+      (await this.models.settings()).supervisorEnabled === false
+    ) {
+      await this.store.change((current) => {
+        const g = current.goals.find((g) => g.id === goal.id);
+        if (g?.inference_request?.id === request.id) {
+          g.state = 'review';
+          delete g.inference_request;
+        }
+      });
+      this.finishInference(goal.id);
+      return;
+    }
+    const abort =
+      this.intakeJobs.get(goal.id) ??
+      (this.job?.id === goal.id ? this.job.abort : new AbortController());
+    this.inferenceJobs.add(request.id);
+    try {
+      const result = await this.runPlanning(goal, state, role, abort.signal);
+      if (result && !abort.signal.aborted)
+        await context.publish({
+          event_type: 'intelligence.decision.proposed',
+          correlation_id: goal.conversation_id,
+          causation_id: context.event.eventId,
+          idempotency_key: `decision:${request.id}`,
+          payload: {
+            goal_id: goal.id,
+            revision: goal.revision,
+            request_id: request.id,
+            ...result,
+          },
+        });
+    } catch (error) {
+      if (!abort.signal.aborted) await this.failInference(goal, error as Error);
+    } finally {
+      this.inferenceJobs.delete(request.id);
+      this.finishInference(goal.id);
+    }
+  }
+
   private async runPlanning(
     goal: Goal,
     state: QueueState,
@@ -1057,7 +1271,19 @@ export class TaskEngine
       state,
       {
         images: settings.images,
-        conversation: await this.memory?.view(goal.conversation_id),
+        conversation:
+          role === 'planner'
+            ? await this.memory?.view(goal.conversation_id, 2000)
+            : undefined,
+        contextBudgetTokens: settings.performance?.contextBudgetTokens ?? 12000,
+        toolResultBudgetTokens: settings.performance?.toolResultBudgetTokens ?? 1600,
+        ...(this.store.archiveEvidence
+          ? {
+              archiveEvidence: (ref: string, value: unknown) =>
+                this.store.archiveEvidence(goal.id, ref, value),
+              readEvidence: (ref: string) => this.store.readEvidence(goal.id, ref),
+            }
+          : {}),
         ...(this.memory
           ? {
               readHistory: async (args: {
@@ -1095,7 +1321,6 @@ export class TaskEngine
           if (
             decision.outcome === 'continue' &&
             !decision.actions.length &&
-            !(role === 'planner' && decision.mode === 'complex') &&
             !goal.steps.some((s) => s.state === 'pending')
           )
             throw new Error(
@@ -1114,10 +1339,9 @@ export class TaskEngine
             );
           if (
             decision.outcome === 'complete' &&
-            (role !== 'supervisor' ||
-              goal.steps.some(
-                (s) => inFlight(s) || ['pending', 'failed'].includes(s.state),
-              ))
+            goal.steps.some(
+              (s) => inFlight(s) || ['pending', 'failed'].includes(s.state),
+            )
           )
             throw new Error(
               '仍有待处理或失败步骤，请先恢复或调整剩余计划，再根据新的执行证据核对目标。',
@@ -1157,6 +1381,7 @@ export class TaskEngine
             state.scene.available = true;
             state.scene.holding = record(live.holding);
             state.scene.observation = record(live.observation);
+            state.scene.world = record(live.world);
           });
           return {
             ...live,
@@ -1195,7 +1420,7 @@ export class TaskEngine
         { kind: 'decision', role, goal_id: goal.id, ...decision },
       ),
     );
-    await this.acceptDecision(goal, role, decision, record(live.capabilities));
+    return { decision, capabilities: record(live.capabilities) };
   }
   private async acceptDecision(
     previous: Goal,
@@ -1218,9 +1443,10 @@ export class TaskEngine
       )
         return;
       goal.updated_at = now();
-      if (role === 'planner' || !goal.summary)
-        goal.summary = decision.summary || goal.summary;
-      if (role === 'planner' || !goal.completion)
+      const continuing = goal.steps.length > 0;
+      delete goal.inference_request;
+      if (!continuing || !goal.summary) goal.summary = decision.summary || goal.summary;
+      if (!continuing || !goal.completion)
         goal.completion = decision.completion || goal.completion;
       goal.message = decision.message;
       if (decision.outcome === 'chat') {
@@ -1236,7 +1462,6 @@ export class TaskEngine
       }
       if (decision.outcome === 'complete') {
         if (
-          role !== 'supervisor' ||
           !goal.steps.some((s) => s.state === 'completed') ||
           goal.steps.some((s) => inFlight(s) || ['pending', 'failed'].includes(s.state))
         )
@@ -1246,16 +1471,16 @@ export class TaskEngine
         return;
       }
       goal.interaction = false;
-      if (role === 'planner' && decision.mode === 'complex') {
-        goal.proposal = decision.actions;
-        goal.mode = 'complex';
-        goal.state = 'review';
-        goal.review_reason = '根据规划方案生成可执行队列。';
-        this.reply(emit, goal, `执行方案：${goal.summary}`);
-        return;
-      }
+      goal.mode =
+        goal.mode === 'complex' || decision.mode === 'complex' ? 'complex' : 'simple';
+      goal.plan_scope =
+        decision.plan_scope ??
+        (continuing ? goal.plan_scope : undefined) ??
+        (goal.mode === 'complex' ? 'stage' : 'complete');
+      delete goal.review_kind;
+      goal.review_reason = '';
       if (!decision.actions.length) {
-        if (role === 'supervisor' && goal.steps.some((s) => s.state === 'pending')) {
+        if (goal.steps.some((s) => s.state === 'pending')) {
           if (goal.steps.some((s) => s.state === 'failed')) goal.recovery_count++;
           for (const step of goal.steps)
             if (['failed', 'cancelled'].includes(step.state)) step.state = 'superseded';

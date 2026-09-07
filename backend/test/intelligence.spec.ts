@@ -126,6 +126,37 @@ describe('durable goal execution', () => {
       runtime as unknown as RuntimeState,
       { publishFromAgent: publish } as unknown as EventBus,
     );
+    publish.mockImplementation(
+      async (
+        _source: string,
+        input: { event_type: string; payload: Record<string, unknown> },
+      ) => {
+        if (!['planning.requested', 'supervision.requested'].includes(input.event_type))
+          return {};
+        const role =
+          input.event_type === 'planning.requested' ? 'planner' : 'supervisor';
+        const request = context(
+          String(input.payload.request_id),
+          input.event_type,
+          input.payload,
+        );
+        request.publish = async (output) => {
+          const response = context(
+            'decision-' + String(input.payload.request_id),
+            output.event_type,
+            output.payload,
+          );
+          response.event.sourceAgentId =
+            role === 'planner' ? 'robot.planning' : 'robot.supervision';
+          await engine.handle(response);
+          return;
+        };
+        queueMicrotask(() => {
+          void engine.handleInference(role, request);
+        });
+        return {};
+      },
+    );
     vi.spyOn(engine, 'live').mockResolvedValue({
       phase: 'idle',
       command_id: null,
@@ -268,7 +299,7 @@ describe('durable goal execution', () => {
         {
           command_id: first.command_id,
           ok: false,
-          failure: { code: 'EMPTY_GRASP' },
+          failure: { code: 'NO_IK' },
           holding: { verified: false },
         },
         first.task_id,
@@ -438,24 +469,51 @@ describe('durable goal execution', () => {
     expect(store.state.goals[0]!.steps[1]!.state).toBe('pending');
     expect(planning.planGoal).toHaveBeenCalledTimes(1);
   });
-  it('passes complex goals to the supervisor before generating action steps', async () => {
-    vi.mocked(planning.planGoal)
-      .mockResolvedValueOnce(
-        decision({ mode: 'complex', summary: '先观察桌面，再分类收纳', actions: [] }),
-      )
-      .mockResolvedValueOnce(decision());
-    await engine.handle(context('complex', 'intent.created', { text: '帮我收拾桌子' }));
+  it('dispatches a complete complex plan and finishes with supervision disabled', async () => {
+    const models = (engine as unknown as { models: ModelConfig }).models;
+    vi.spyOn(models, 'settings').mockResolvedValue({
+      images: false,
+      supervisorEnabled: false,
+      recoveryBudget: 3,
+    } as Awaited<ReturnType<ModelConfig['settings']>>);
+    vi.mocked(planning.planGoal).mockResolvedValueOnce(
+      decision({ mode: 'complex', plan_scope: 'complete' }),
+    );
+    await engine.handle(
+      context('complex', 'intent.created', { text: '把两个明确步骤执行完' }),
+    );
     await tick();
     await drain();
-    expect(store.state.goals[0]!.state).toBe('review');
-    expect(store.state.goals[0]!.steps).toHaveLength(0);
+    expect(store.state.goals[0]!.steps).toHaveLength(2);
+    for (let i = 0; i < 2; i++) {
+      await tick();
+      const step = store.state.goals[0]!.steps[i]!;
+      await engine.handle(
+        context(
+          'done-' + i,
+          'execution.completed',
+          { command_id: step.command_id, holding: { verified: i === 0 } },
+          step.task_id,
+        ),
+      );
+    }
     await tick();
-    await drain();
+    expect(store.state.goals[0]!.state).toBe('completed');
     expect(vi.mocked(planning.planGoal).mock.calls.map((call) => call[1])).toEqual([
       'planner',
-      'supervisor',
     ]);
-    expect(store.state.goals[0]!.steps).toHaveLength(2);
+    expect(
+      publish.mock.calls.some(
+        (call) =>
+          (call[1] as { event_type: string }).event_type === 'planning.requested',
+      ),
+    ).toBe(true);
+    expect(
+      publish.mock.calls.some(
+        (call) =>
+          (call[1] as { event_type: string }).event_type === 'supervision.requested',
+      ),
+    ).toBe(false);
   });
   it('processes explicit queue management while motion is in flight, leaving ordinary tasks FIFO', async () => {
     await engine.handle(context('first'));
@@ -532,6 +590,33 @@ describe('durable goal execution', () => {
     });
     expect(store.state.goals[0]!.source).toBe('拿起来再放下');
   });
+  it('makes an asynchronously rejected proposal recoverable and ignores its redelivery', async () => {
+    publish.mockResolvedValue({}); // Delivery happens after the worker returns.
+    await engine.handle(context('invalid-proposal'));
+    await tick();
+    await drain();
+    const waiting = store.state.goals[0]!;
+    expect(waiting.state).toBe('planning');
+    const response = context('invalid-decision', 'intelligence.decision.proposed', {
+      goal_id: waiting.id,
+      request_id: waiting.inference_request!.id,
+      revision: waiting.revision,
+      decision: decision({ mode: 'complex', actions: [] }),
+      capabilities: { skills: ['grasp', 'place_held', 'perceive'] },
+    });
+    response.event.sourceAgentId = 'robot.planning';
+    await expect(engine.handle(response)).resolves.toBeUndefined();
+    expect(store.state.goals[0]).toMatchObject({
+      state: 'blocked',
+      source: '拿起来再放下',
+      steps: [],
+    });
+    expect(store.state.goals[0]!.inference_request).toBeUndefined();
+    const saved = structuredClone(store.state);
+    await engine.handle(response);
+    expect(store.state).toEqual(saved);
+    expect(planning.planGoal).not.toHaveBeenCalled();
+  });
   it('does not confuse an outline with completed physical execution', async () => {
     vi.mocked(planning.planGoal)
       .mockResolvedValueOnce(decision({ mode: 'complex', actions: [] }))
@@ -551,7 +636,15 @@ describe('durable goal execution', () => {
           mode: 'complex',
           summary: '整理两个零件',
           completion: '两个零件都已放入各自托盘',
-          actions: [],
+          plan_scope: 'stage',
+          actions: [
+            {
+              title: '观察目标',
+              skill: 'perceive',
+              params: { category: 'part' },
+              review_after: true,
+            },
+          ],
         }),
       )
       .mockResolvedValue(
@@ -835,10 +928,10 @@ describe('model-driven observation', () => {
     );
     expect(result).toEqual(decision());
     expect(
-      call.mock.calls[1][2].map(
+      (call.mock.calls[1]![2] as Array<{ function: { name: string } }>).map(
         (tool: { function: { name: string } }) => tool.function.name,
       ),
-    ).toEqual(['submit_plan']);
+    ).toEqual(planning.roleTools('planner').map((tool) => tool.function.name));
     expect(call).toHaveBeenCalledTimes(2);
   });
   it('does not send images by default', async () => {
@@ -921,7 +1014,12 @@ describe('model-driven observation', () => {
     const events: Record<string, unknown>[] = [];
     const replies = [
       answer('read_image', { camera: 'wrist', purpose: '判断正反端面' }),
-      answer('submit_plan', decision()),
+      answer('submit_review', {
+        verdict: 'repair',
+        reason: '继续放置',
+        actions: decision().actions,
+        plan_scope: 'complete',
+      }),
     ];
     const call = vi.fn(async (_profile, messages: Message[]) => {
       snapshots.push(structuredClone(messages));
@@ -969,7 +1067,9 @@ describe('model-driven observation', () => {
         return answer('read_image', { camera: 'scene', purpose: 'select bin part' });
       if (round === 2) {
         const toolReply = messages.findLast((m) => m.role === 'tool');
-        const image = JSON.parse(String(toolReply!.content)) as { ref: string };
+        const image = JSON.parse(
+          typeof toolReply!.content === 'string' ? toolReply!.content : '{}',
+        ) as { ref: string };
         return answer('ground_region', {
           image_ref: image.ref,
           category: 'part',
