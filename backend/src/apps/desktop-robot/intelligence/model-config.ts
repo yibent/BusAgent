@@ -42,6 +42,7 @@ const configSchema = z.object({
     })
     .default({}),
   images: z.boolean().default(true),
+  supervisorEnabled: z.boolean().default(true),
   recoveryBudget: z.number().int().min(1).max(20).default(3),
 });
 export type ModelSettings = z.infer<typeof configSchema>;
@@ -113,6 +114,8 @@ export class ModelConfig {
   }
   async profile(role: Role): Promise<ModelProfile> {
     const settings = await this.settings();
+    if (role === 'supervisor' && !settings.supervisorEnabled)
+      throw new Error('自动监督 LLM 已关闭，等待人工核验。');
     const profile = settings.profiles.find((p) => p.id === settings.roles[role]);
     if (!profile?.enabled || !profile.apiKey)
       throw new Error(`${role} 模型尚未启用或缺少 API Key，请在模型设置中配置。`);

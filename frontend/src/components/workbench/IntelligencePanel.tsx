@@ -24,6 +24,7 @@ type Settings = {
   profiles: Profile[];
   roles: { planner: string; supervisor: string; dialogue?: string };
   images: boolean;
+  supervisorEnabled: boolean;
   recoveryBudget: number;
   fallbacks: { planner: string[]; supervisor: string[] };
   performance: {
@@ -59,7 +60,7 @@ const states: Record<string, string> = {
   queued: "等待中",
   planning: "规划中",
   running: "执行中",
-  review: "监督判断中",
+  review: "等待核验",
   paused: "已暂停",
   blocked: "需要处理",
   completed: "已完成",
@@ -365,6 +366,14 @@ export function IntelligencePanel({
                   </label>
                 ))}
               </div>
+              <label className="check-label">
+                <input
+                  type="checkbox"
+                  checked={settings.supervisorEnabled !== false}
+                  onChange={(e) => setSettings({ ...settings, supervisorEnabled: e.target.checked })}
+                />
+                自动监督 LLM（关闭后由人工核验，保留物理执行检查）
+              </label>
               <label className="check-label">
                 <input
                   type="checkbox"

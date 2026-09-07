@@ -679,6 +679,19 @@ export class TaskEngine
       }
       if (goal.state === 'queued' && (await this.useAhead(goal, state))) return;
       if (goal.state === 'queued' || goal.state === 'review') {
+        if (
+          goal.state === 'review' &&
+          (await this.models.settings()).supervisorEnabled === false
+        ) {
+          const message =
+            '自动监督 LLM 已关闭，等待人工核验或调整后续步骤；执行反馈已保留。';
+          if (goal.message !== message)
+            await this.store.change((current) => {
+              const waiting = current.goals.find((g) => g.id === goal.id);
+              if (waiting?.state === 'review') waiting.message = message;
+            });
+          return;
+        }
         this.startPlanning(
           goal,
           state,
@@ -993,6 +1006,7 @@ export class TaskEngine
     signal: AbortSignal,
   ) {
     const settings = await this.models.settings();
+    if (role === 'supervisor' && settings.supervisorEnabled === false) return;
     if (
       role === 'supervisor' &&
       goal.steps.some((s) => s.state === 'failed') &&

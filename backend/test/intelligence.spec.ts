@@ -151,6 +151,7 @@ describe('durable goal execution', () => {
       roles: { planner: 'test', supervisor: 'test' },
       fallbacks: { planner: [], supervisor: [] },
       images: true,
+      supervisorEnabled: true,
       recoveryBudget: 3,
       performance: {
         lookahead: true,
@@ -246,6 +247,41 @@ describe('durable goal execution', () => {
     await engine.handle(context('input-0'));
     expect(store.state.goals).toHaveLength(20);
     expect(planning.planGoal).not.toHaveBeenCalled();
+  });
+  it('leaves physical failures for manual review with zero supervisor calls when disabled', async () => {
+    const models = (engine as unknown as { models: ModelConfig }).models;
+    vi.spyOn(models, 'settings').mockResolvedValue({
+      ...(await models.settings()),
+      supervisorEnabled: false,
+    });
+    await engine.handle(context('manual-review'));
+    await tick();
+    await drain();
+    await tick();
+    await tick();
+    const goal = store.state.goals[0]!;
+    const first = goal.steps[0]!;
+    await engine.handle(
+      context(
+        'grasp-failed',
+        'execution.failed',
+        {
+          command_id: first.command_id,
+          ok: false,
+          failure: { code: 'EMPTY_GRASP' },
+          holding: { verified: false },
+        },
+        first.task_id,
+      ),
+    );
+    const calls = vi.mocked(planning.planGoal).mock.calls.length;
+    await tick();
+    await drain();
+    await tick();
+    expect(planning.planGoal).toHaveBeenCalledTimes(calls);
+    expect(store.state.goals[0]!.state).toBe('review');
+    expect(store.state.goals[0]!.steps[0]!.state).toBe('failed');
+    expect(store.state.goals[0]!.message).toContain('自动监督 LLM 已关闭');
   });
   it('dispatches the next step only after the first physical result, with stable command ids', async () => {
     await engine.handle(context('input'));
