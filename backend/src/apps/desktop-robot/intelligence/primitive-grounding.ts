@@ -39,6 +39,13 @@ export async function groundPrimitive(
   remembered: unknown[] = [],
 ): Promise<Action> {
   const result = structuredClone(action);
+  const visionMode =
+    action.execution?.loop === 'fast_only'
+      ? 'fast'
+      : action.execution?.loop === 'slow'
+        ? 'slow'
+        : 'auto';
+  if (visionMode === 'fast') recover = undefined;
   for (const field of ['target', 'destination'] as const) {
     const choice = object(result.params[field]);
     const permitted =
@@ -52,7 +59,7 @@ export async function groundPrimitive(
       scope: 'target',
       category: choice.label,
       selection: 'all',
-      vision_mode: 'auto',
+      vision_mode: visionMode,
     });
     // Instance collections already merge views of the same physical object.
     let candidates = observedCandidates(packet);
@@ -68,7 +75,7 @@ export async function groundPrimitive(
         const current = await observe({
           ref: known.ref,
           selection: 'one',
-          vision_mode: 'auto',
+          vision_mode: visionMode,
         });
         candidates.push(...observedCandidates(current));
       }

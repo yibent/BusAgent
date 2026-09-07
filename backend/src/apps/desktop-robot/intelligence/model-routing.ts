@@ -51,7 +51,7 @@ export async function routedCompletion(
       const failures = (health?.failures ?? 0) + 1;
       cooling.set(key, {
         failures,
-        until: Date.now() + Math.min(120000, failures * 30000),
+        until: Date.now() + Math.min(600000, failures * 120000),
       });
       if (cooling.size > 128) cooling.delete(cooling.keys().next().value!);
       await record({

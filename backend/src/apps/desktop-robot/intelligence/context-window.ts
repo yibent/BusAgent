@@ -14,6 +14,11 @@ const priority = [
   'postconditions',
   'review_required',
   'review_reason',
+  'review_kind',
+  'capabilities',
+  'skills',
+  'checks',
+  'steps',
   'request_id',
   'ref',
   'axis_ref',
@@ -204,7 +209,44 @@ export class InferenceWindow {
       size = Math.max(1, Math.floor(page.items.length / 2));
       page = evidencePage(value, path, offset, size);
     }
-    return page;
+    const selected = 'items' in page ? page.items : page.value;
+    const { preview, omitted_paths, omitted_path_count } = evidencePreview(
+      selected,
+      this.toolBudget - 160,
+    );
+    const sourcePath = (relative: string) => {
+      if (!('items' in page)) return (path ?? '') + relative;
+      const match = /^\/(\d+)(.*)$/.exec(relative);
+      return (
+        (path ?? '') +
+        (match ? `/${(page.offset ?? 0) + Number(match[1])}${match[2]}` : relative)
+      );
+    };
+    return {
+      ...page,
+      ...('items' in page
+        ? {
+            items: preview,
+            next_offset:
+              Array.isArray(preview) &&
+              (page.offset ?? 0) + preview.length < (page.total ?? 0)
+                ? (page.offset ?? 0) + preview.length
+                : null,
+          }
+        : { value: preview }),
+      source_ref: ref,
+      ...(omitted_path_count
+        ? {
+            omitted_paths: omitted_paths.map((entry) => ({
+              ...entry,
+              path: sourcePath(entry.path),
+            })),
+            omitted_path_count,
+            retrieval:
+              'read_evidence(source_ref, omitted_paths中的path); 原始证据未删除',
+          }
+        : {}),
+    };
   }
 
   prepare(messages: Message[], tools: Tool[]) {

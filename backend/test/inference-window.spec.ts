@@ -65,8 +65,29 @@ describe('bounded retrievable agent context', () => {
     await expect(resumed.read('missing')).rejects.toThrow('证据不存在');
   });
 
+  it('bounds root evidence reads and preserves source paths for precise retrieval', async () => {
+    const window = new InferenceWindow(12000, 800);
+    const raw = {
+      geometry: {
+        cells: Array.from({ length: 200 }, (_, i) => ({
+          ref: `observed-${i}`,
+          description: 'detailed observation '.repeat(20),
+        })),
+      },
+      holding: { verified: true },
+    };
+    const saved = await window.toolResult('inspect_object', raw);
+    const page = await window.read(saved.evidence_ref);
+    expect(JSON.stringify(page).length).toBeLessThan(5000);
+    expect(page.source_ref).toBe(saved.evidence_ref);
+    expect(page.omitted_paths?.some((p) => p.path.startsWith('/geometry'))).toBe(true);
+    const exact = await window.read(saved.evidence_ref, '/geometry/cells/199/ref');
+    expect(exact.value).toBe('observed-199');
+    expect(window.evidence.size).toBe(1);
+  });
+
   it('bounds a long tool loop without orphan calls, lost user constraints or invalid JSON', async () => {
-    const window = new InferenceWindow(6500, 1000);
+    const window = new InferenceWindow(12000, 1000);
     const request = '只整理指定区域；第二排第三格；闭口朝上；不要搬走未装满的箱子。';
     const messages: Message[] = [
       { role: 'system', content: PLANNER_SYSTEM },
@@ -108,7 +129,7 @@ describe('bounded retrievable agent context', () => {
       compacted += metrics.compacted_rounds;
       expect(
         metrics.text_tokens + metrics.tool_tokens + metrics.image_reserve_tokens,
-      ).toBeLessThanOrEqual(6500);
+      ).toBeLessThanOrEqual(12000);
       expect(messages[1]!.content).toContain(request);
       const calls = messages.flatMap((m) => m.tool_calls ?? []);
       const outputs = messages.filter((m) => m.role === 'tool');

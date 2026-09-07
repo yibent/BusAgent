@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { executionPolicySchema } from './execution-policy.js';
 import { normalizeActionParams } from './action-params.js';
 
 export const intelligenceEnabled = () =>
@@ -29,6 +30,7 @@ export const actionSchema = z
     skill: z.string().min(1),
     params: z.record(z.unknown()).default({}),
     review_after: z.boolean().default(false),
+    execution: executionPolicySchema.optional(),
   })
   .transform((action) => ({
     ...action,
@@ -46,6 +48,8 @@ export const decisionSchema = z.object({
   message: z.string().default(''),
   plan_scope: z.enum(['complete', 'stage']).optional(),
   evidence_reply: z.boolean().optional(),
+  queue_update: z.enum(['replace_pending', 'append']).optional(),
+  final_review: z.boolean().optional(),
 });
 export type Decision = z.infer<typeof decisionSchema>;
 export const reviewSchema = z.object({
@@ -80,7 +84,19 @@ export interface QueueStep extends Action {
   last_dispatched_at?: string;
   cancel_requested?: boolean;
 }
+export interface VerificationJob {
+  id: string;
+  step_id: string;
+  command_id: string;
+  revision: number;
+  state: 'pending' | 'running' | 'passed' | 'failed' | 'uncertain' | 'superseded';
+  result?: Record<string, unknown>;
+  started_at?: string;
+  finished_at?: string;
+}
 export interface Goal {
+  final_review?: boolean;
+  checks?: VerificationJob[];
   local_recoveries?: string[];
   plan_scope?: 'complete' | 'stage';
   review_kind?: 'continuation' | 'verification' | 'failure';

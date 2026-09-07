@@ -1,3 +1,4 @@
+import { policyParams, retryByPolicy, physicalVerdict } from './execution-policy.js';
 import { canPrepareAhead, independentAhead } from './lookahead.js';
 import {
   executionGoals,
@@ -125,7 +126,8 @@ export function completionReply(goal: Goal): string {
 }
 
 export function executablePlan(goal: Goal, step: QueueStep): RobotPlan {
-  const params = { ...step.params };
+  const params = policyParams(step);
+  if (step.execution) params.execution_policy = step.execution;
   if (step.skill === 'grasp' && !params.orientation) {
     const index = goal.steps.findIndex((item) => item.id === step.id);
     const nextManipulation =
@@ -218,6 +220,17 @@ export function applyResult(
   if (resolveRecovery(goal, step, state, (action) => stepsFor([action])[0]!))
     return goal;
   if (terminal === 'completed') {
+    if (step.execution?.supervision && step.execution.supervision.kind !== 'none') {
+      goal.checks ??= [];
+      if (!goal.checks.some((c) => c.command_id === step.command_id))
+        goal.checks.push({
+          id: `check:${step.command_id}`,
+          step_id: step.id,
+          command_id: step.command_id,
+          revision: goal.revision,
+          state: 'pending',
+        });
+    }
     if (['grasp', 'pick_place', 'place_held'].includes(step.skill))
       goal.recovery_count = 0;
     goal.state = step.review_after || result.review_required ? 'review' : 'running';
@@ -236,6 +249,11 @@ export function applyResult(
     goal.review_kind = 'failure';
     goal.review_reason = `步骤“${step.title}”结果 ${terminal}；保留后续任务，根据当前持物和观测决定恢复。`;
   }
+  if (goal.checks?.some((c) => ['failed', 'uncertain'].includes(c.state))) {
+    goal.state = 'review';
+    goal.review_kind = 'continuation';
+    goal.review_reason = '局部监督有待处理的结论，请检查checks。';
+  }
   return goal;
 }
 
@@ -249,6 +267,7 @@ export class TaskEngine
   private ticking = false;
   private job: { id: string; abort: AbortController } | undefined;
   private intakeJobs = new Map<string, AbortController>();
+  private verificationJobs = new Map<string, AbortController>();
   private preparationJobs = new Map<string, AbortController>();
   private inferenceJobs = new Set<string>();
   private ahead:
@@ -288,6 +307,7 @@ export class TaskEngine
     this.job?.abort.abort();
     for (const abort of this.intakeJobs.values()) abort.abort();
     for (const abort of this.preparationJobs.values()) abort.abort();
+    for (const abort of this.verificationJobs.values()) abort.abort();
     this.ahead?.abort.abort();
   }
   private base() {
@@ -784,6 +804,7 @@ export class TaskEngine
       }
       await this.flush();
       const state = await this.store.read();
+      this.scheduleVerification(state);
       // Controller reconciliation also runs while paused/cancelled, retaining measured holding state.
       for (const interaction of state.goals.filter(
         (g) => g.interaction && g.state === 'queued',
@@ -811,10 +832,25 @@ export class TaskEngine
       }
       if (goal.state === 'queued' && (await this.useAhead(goal, state))) return;
       if (goal.state === 'queued' || goal.state === 'review') {
-        if (goal.state === 'review' && (await this.recoverLocally(goal, state))) return;
+        if (goal.state === 'review' && goal.review_kind === 'failure') {
+          let retried = false;
+          await this.store.change((current) => {
+            const g = current.goals.find((item) => item.id === goal.id);
+            if (g?.state === 'review' && g.revision === goal.revision)
+              retried = retryByPolicy(g, current, (old) => stepsFor([old])[0]!);
+          });
+          if (retried) return;
+        }
+        if (
+          goal.state === 'review' &&
+          !goal.steps.findLast((s) => s.state === 'failed')?.execution &&
+          (await this.recoverLocally(goal, state))
+        )
+          return;
         if (
           goal.state === 'review' &&
           goal.review_kind !== 'continuation' &&
+          !goal.steps.some((s) => s.execution) &&
           (await this.models.settings()).supervisorEnabled === false
         ) {
           const message =
@@ -828,7 +864,9 @@ export class TaskEngine
         }
         this.startPlanning(
           goal,
-          goal.state === 'queued' || goal.review_kind === 'continuation'
+          goal.state === 'queued' ||
+            goal.review_kind === 'continuation' ||
+            goal.steps.some((s) => s.execution)
             ? 'planner'
             : 'supervisor',
         );
@@ -837,6 +875,14 @@ export class TaskEngine
       if (goal.state !== 'running') return;
       const step = goal.steps.find((s) => s.state === 'pending');
       if (step) {
+        if (
+          goal.checks?.some(
+            (c) =>
+              ['pending', 'running'].includes(c.state) &&
+              goal.steps.find((s) => s.id === c.step_id)?.execution?.supervision?.wait,
+          )
+        )
+          return;
         const live = await this.live();
         if (
           live.command_id &&
@@ -879,12 +925,21 @@ export class TaskEngine
         await this.store.change((current, emit) => {
           const g = current.goals.find((g) => g.id === goal.id);
           if (!g || g.state !== 'running') return;
+          if (g.checks?.some((c) => ['pending', 'running'].includes(c.state))) return;
+          if (g.checks?.some((c) => ['failed', 'uncertain'].includes(c.state))) {
+            g.state = 'review';
+            g.review_kind = 'continuation';
+            g.review_reason = '异步监督返回失败或不确定，请根据checks修正剩余任务。';
+            return;
+          }
           if (
+            g.final_review ||
             (g.plan_scope ?? (g.mode === 'complex' ? 'stage' : 'complete')) === 'stage'
           ) {
             g.state = 'review';
             g.review_kind = 'continuation';
-            g.review_reason = '本阶段动作已结束，核对目标条件，继续展开或完成。';
+            g.review_reason =
+              '执行批次已结束，异步检查已收齐。请对照原始目标做最终检查或追加下一批，不重复完成的动作。';
           } else {
             g.state = 'completed';
             g.updated_at = now();
@@ -901,6 +956,132 @@ export class TaskEngine
       this.ticking = false;
     }
   }
+  /** One durable local inspection at a time; physical dispatch does not await inference. */
+  private scheduleVerification(state: QueueState) {
+    if (this.verificationJobs.size) return;
+    for (const goal of state.goals) {
+      if (ended(goal) || goal.state === 'paused') continue;
+      const job = goal.checks?.find(
+        (c) => c.state === 'pending' || c.state === 'running',
+      );
+      if (!job) continue;
+      const step = goal.steps.find((s) => s.id === job.step_id);
+      if (!step?.execution?.supervision) continue;
+      const abort = new AbortController();
+      this.verificationJobs.set(job.id, abort);
+      void trackBackground(async () => {
+        await this.store.change((current, emit) => {
+          const g = current.goals.find((g) => g.id === goal.id);
+          const c = g?.checks?.find((c) => c.id === job.id);
+          if (c) {
+            c.state = 'running';
+            c.started_at = now();
+          }
+          this.emit(
+            emit,
+            `${job.id}:started`,
+            'intelligence.observed',
+            goal.conversation_id,
+            {
+              kind: 'operation_started',
+              operation: 'placement_verification',
+              domain: 'vision',
+              operation_id: job.id,
+              started_at_ms: Date.now(),
+              goal_id: goal.id,
+              check_id: job.id,
+              loop: 'fast',
+            },
+          );
+        });
+        const policy = step.execution!.supervision!;
+        let verdict = physicalVerdict(record(step.result), step.skill);
+        let evidence: Record<string, unknown> = { physical_verdict: verdict };
+        try {
+          if (policy.kind === 'florence') {
+            if (!policy.box_2d || !policy.target_label)
+              throw new Error('Florence局部监督需要box_2d和target_label');
+            const output = record(record(step.result).result ?? step.result);
+            const frozen = record(output.post_action_snapshot).observation_ref;
+            if (typeof frozen !== 'string')
+              throw new Error(
+                '动作未提供冻结的执行后图像，不能用后来场景冒充该动作结果',
+              );
+            const frame = await this.image(policy.camera ?? 'scene', frozen);
+            const response = await fetch(
+              `${process.env.BUSAGENT_VISION_URL ?? 'http://127.0.0.1:5570'}/verify`,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  snapshot_ref: frame.metadata.snapshot_ref,
+                  camera: policy.camera ?? 'scene',
+                  box_2d: policy.box_2d,
+                  target_label: policy.target_label,
+                  predicate: policy.predicate ?? 'present',
+                }),
+                signal: AbortSignal.any([abort.signal, AbortSignal.timeout(30000)]),
+              },
+            );
+            if (!response.ok) throw new Error(`局部监督服务HTTP ${response.status}`);
+            evidence = {
+              ...evidence,
+              frame: frame.metadata,
+              visual: await response.json(),
+            };
+            const visual = record(evidence.visual);
+            if (visual.verdict !== 'passed' || verdict !== 'passed')
+              verdict =
+                visual.verdict === 'failed' || verdict === 'failed'
+                  ? 'failed'
+                  : 'uncertain';
+          }
+        } catch (error) {
+          verdict = 'uncertain';
+          evidence.error = (error as Error).message;
+        }
+        await this.store.change((current, emit) => {
+          const g = current.goals.find((g) => g.id === goal.id);
+          const c = g?.checks?.find((c) => c.id === job.id);
+          if (!g || !c) return;
+          if (g.revision !== job.revision || ended(g)) {
+            c.state = 'superseded';
+            return;
+          }
+          c.state = verdict;
+          c.result = evidence;
+          c.finished_at = now();
+          if (verdict !== 'passed' && g.state !== 'paused') {
+            // An in-flight command is reconciled first. No speculative cancellation/replay.
+            g.state = 'review';
+            g.review_kind = 'continuation';
+            g.review_reason = `异步局部监督${verdict}，见checks；保留已完成动作。`;
+          }
+          this.emit(
+            emit,
+            `${job.id}:finished`,
+            'intelligence.observed',
+            goal.conversation_id,
+            {
+              kind: 'operation_completed',
+              operation: 'placement_verification',
+              domain: 'vision',
+              operation_id: job.id,
+              finished_at_ms: Date.now(),
+              goal_id: goal.id,
+              check_id: job.id,
+              verdict,
+              evidence,
+            },
+          );
+        });
+      })
+        .catch((error) => this.logger.warn(String(error)))
+        .finally(() => this.verificationJobs.delete(job.id));
+      return;
+    }
+  }
+
   private async preparePrimitive(
     goal: Goal,
     step: QueueStep,
@@ -1433,7 +1614,6 @@ export class TaskEngine
     const settings = await this.models.settings();
     if (role === 'supervisor' && settings.supervisorEnabled === false) return;
     if (
-      role === 'supervisor' &&
       goal.steps.some((s) => s.state === 'failed') &&
       goal.recovery_count >= settings.recoveryBudget
     )
@@ -1506,7 +1686,8 @@ export class TaskEngine
       goal,
       state,
       {
-        routeRequests: true,
+        persistBrain: true,
+        deadlineMs: Date.now() + (settings.performance?.planningBudgetMs ?? 60000),
         readQueue: () => this.store.read(),
         images: settings.images,
         createWindow: this.compression
@@ -1593,7 +1774,7 @@ export class TaskEngine
           for (const action of decision.actions) {
             if (!Array.isArray(skills) || !skills.includes(action.skill))
               throw new Error(
-                `当前没有 ${action.skill} 技能，请换成真实能力目录中的技能组合。`,
+                `当前没有 ${action.skill} 技能，可用技能：${Array.isArray(skills) ? skills.join(', ') : '执行器暂不可用'}。请按工具schema中的真实名称提交。`,
               );
             const step = stepsFor([action])[0]!;
             const errors = validatePlan(executablePlan(goal, step));
@@ -1720,6 +1901,7 @@ export class TaskEngine
         this.reply(emit, goal, decision.message || '任务完成条件已核对。');
         return;
       }
+      goal.final_review = decision.final_review ?? goal.final_review ?? false;
       goal.interaction = false;
       goal.mode =
         goal.mode === 'complex' || decision.mode === 'complex' ? 'complex' : 'simple';
@@ -1734,6 +1916,10 @@ export class TaskEngine
           if (goal.steps.some((s) => s.state === 'failed')) goal.recovery_count++;
           for (const step of goal.steps)
             if (['failed', 'cancelled'].includes(step.state)) step.state = 'superseded';
+          // Mastra has reviewed these conclusions and explicitly retained the
+          // remaining batch. Do not send the same check back every tick.
+          for (const check of goal.checks ?? [])
+            if (['failed', 'uncertain'].includes(check.state)) check.state = 'superseded';
           goal.state = 'running';
           goal.message = decision.message || '继续执行已规划的剩余步骤。';
           this.reply(emit, goal, goal.message);
@@ -1741,11 +1927,18 @@ export class TaskEngine
         }
         throw new Error('规划尚未给出下一步动作，任务保留等待补充。');
       }
-      if (role === 'supervisor' && goal.steps.some((s) => s.state === 'failed'))
-        goal.recovery_count++;
+      if (goal.steps.some((s) => s.state === 'failed')) goal.recovery_count++;
       for (const step of goal.steps)
-        if (['pending', 'failed', 'cancelled'].includes(step.state))
+        if (
+          [
+            'failed',
+            'cancelled',
+            ...(decision.queue_update === 'append' ? [] : ['pending']),
+          ].includes(step.state)
+        )
           step.state = 'superseded';
+      for (const check of goal.checks ?? [])
+        if (['failed', 'uncertain'].includes(check.state)) check.state = 'superseded';
       goal.steps.push(...stepsFor(decision.actions));
       goal.state = role === 'planner' ? 'queued' : 'running';
       goal.message = waitingMessage(state, goal);

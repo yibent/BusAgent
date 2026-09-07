@@ -185,7 +185,8 @@ describe('durable goal execution', () => {
     expect(planning.planGoal).not.toHaveBeenCalled();
     expect(
       publish.mock.calls.some(
-        ([, event]) => event.event_type === 'robot.execute.requested',
+        ([, event]) =>
+          (event as { event_type: string }).event_type === 'robot.execute.requested',
       ),
     ).toBe(false);
   });
@@ -244,7 +245,9 @@ describe('durable goal execution', () => {
     expect(preparation).toHaveBeenCalledTimes(1);
     expect(store.state.goals).toHaveLength(1);
     expect(
-      publish.mock.calls.some(([, e]) => e.event_type === 'intelligence.reply'),
+      publish.mock.calls.some(
+        ([, e]) => (e as { event_type: string }).event_type === 'intelligence.reply',
+      ),
     ).toBe(true);
     finish(false);
     await drain();
@@ -813,48 +816,64 @@ describe('durable goal execution', () => {
     expect(goal.recovery_count).toBe(0);
     expect(goal.state).toBe('review');
   });
-  it('continues the existing queue after a checkpoint without requiring a replacement plan', async () => {
-    vi.mocked(planning.planGoal)
-      .mockResolvedValueOnce(
-        decision({
-          actions: [
-            {
-              title: '观察',
-              skill: 'perceive',
-              params: { category: 'part' },
-              review_after: true,
-            },
-            {
-              title: '抓取',
-              skill: 'grasp',
-              params: { target: 'part' },
-              review_after: false,
-            },
-          ],
-        }),
-      )
-      .mockResolvedValueOnce(decision({ actions: [] }));
-    await engine.handle(context('keep-plan'));
-    await tick();
-    await drain();
-    await tick();
-    const first = store.state.goals[0]!.steps[0]!;
-    const pending = store.state.goals[0]!.steps[1]!.command_id;
-    await engine.handle(
-      context(
-        'observed',
-        'execution.completed',
-        { command_id: first.command_id },
-        first.task_id,
-      ),
-    );
-    await tick();
-    await drain();
-    await tick();
-    expect(store.state.goals[0]!.steps).toHaveLength(2);
-    expect(store.state.goals[0]!.steps[1]!.command_id).toBe(pending);
-    expect(store.state.goals[0]!.steps[1]!.state).toBe('dispatching');
-  });
+  it.each([false, true])(
+    'continues the existing queue after a checkpoint and acknowledges reviewed checks: %s',
+    async (hasLocalCheck) => {
+      vi.mocked(planning.planGoal)
+        .mockResolvedValueOnce(
+          decision({
+            actions: [
+              {
+                title: '观察',
+                skill: 'perceive',
+                params: { category: 'part' },
+                review_after: true,
+              },
+              {
+                title: '抓取',
+                skill: 'grasp',
+                params: { target: 'part' },
+                review_after: false,
+              },
+            ],
+          }),
+        )
+        .mockResolvedValueOnce(decision({ actions: [] }));
+      await engine.handle(context('keep-plan'));
+      await tick();
+      await drain();
+      await tick();
+      const first = store.state.goals[0]!.steps[0]!;
+      const pending = store.state.goals[0]!.steps[1]!.command_id;
+      await engine.handle(
+        context(
+          'observed',
+          'execution.completed',
+          { command_id: first.command_id },
+          first.task_id,
+        ),
+      );
+      if (hasLocalCheck)
+        store.state.goals[0]!.checks = [
+          {
+            id: 'local-check',
+            step_id: first.id,
+            command_id: first.command_id,
+            revision: store.state.goals[0]!.revision,
+            state: 'uncertain',
+            result: { reason: 'occluded ROI' },
+          },
+        ];
+      await tick();
+      await drain();
+      await tick();
+      expect(store.state.goals[0]!.steps).toHaveLength(2);
+      expect(store.state.goals[0]!.steps[1]!.command_id).toBe(pending);
+      expect(store.state.goals[0]!.steps[1]!.state).toBe('dispatching');
+      if (hasLocalCheck)
+        expect(store.state.goals[0]!.checks![0]!.state).toBe('superseded');
+    },
+  );
   it('does not redeliver a cancelled child after pause followed by immediate resume', async () => {
     await engine.handle(context('first'));
     await tick();
@@ -1059,7 +1078,7 @@ describe('model-driven observation', () => {
       (call.mock.calls[1]![2] as Array<{ function: { name: string } }>).map(
         (tool: { function: { name: string } }) => tool.function.name,
       ),
-    ).toEqual(planning.roleTools('planner').map((tool) => tool.function.name));
+    ).toEqual(['submit_plan']);
     expect(call).toHaveBeenCalledTimes(2);
   });
   it('does not send images by default', async () => {
@@ -1141,7 +1160,17 @@ describe('model-driven observation', () => {
     const snapshots: Message[][] = [];
     const events: Record<string, unknown>[] = [];
     const replies = [
-      answer('read_image', { camera: 'wrist', purpose: '判断正反端面' }),
+      answer('read_image', {
+        camera: 'wrist',
+        purpose: '判断正反端面',
+        observation_ref: 'same-frame',
+      }),
+      {
+        message: { role: 'assistant' as const, content: 'closed end is visible' },
+        model: profile.model,
+        usage: {},
+        elapsed_ms: 1,
+      },
       answer('submit_review', {
         verdict: 'repair',
         reason: '继续放置',
@@ -1165,6 +1194,15 @@ describe('model-driven observation', () => {
       {
         images: true,
         readImage,
+        readObservation: async () => ({
+          geometry: {
+            axis_ref: 'observed-axis',
+            endpoints_px: [
+              [40, 80],
+              [120, 140],
+            ],
+          },
+        }),
         readState: async () => ({}),
         record: async (e) => {
           events.push(e);
@@ -1175,8 +1213,10 @@ describe('model-driven observation', () => {
     );
     expect(JSON.stringify(snapshots[0])).not.toContain('data:image');
     expect(JSON.stringify(snapshots[1])).toContain('data:image/jpeg');
+    expect(JSON.stringify(snapshots[1])).toContain('endpoints_px');
+    expect(JSON.stringify(snapshots[2])).not.toContain('data:image');
     expect(JSON.stringify(events)).not.toContain('anBlZy1kYXRh');
-    expect(readImage).toHaveBeenCalledWith('wrist');
+    expect(readImage).toHaveBeenCalledWith('wrist', 'same-frame');
   });
   it('grounds a box against the exact requested image and returns a real executable reference', async () => {
     let round = 0;
@@ -1193,13 +1233,20 @@ describe('model-driven observation', () => {
       round++;
       if (round === 1)
         return answer('read_image', { camera: 'scene', purpose: 'select bin part' });
-      if (round === 2) {
+      if (round === 2)
+        return {
+          message: { role: 'assistant' as const, content: 'part visible' },
+          model: profile.model,
+          usage: {},
+          elapsed_ms: 1,
+        };
+      if (round === 3) {
         const toolReply = messages.findLast((m) => m.role === 'tool');
         const image = JSON.parse(
           typeof toolReply!.content === 'string' ? toolReply!.content : '{}',
-        ) as { ref: string };
+        ) as { image_ref: string };
         return answer('ground_region', {
-          image_ref: image.ref,
+          image_ref: image.image_ref,
           category: 'part',
           box_2d: [200, 100, 400, 300],
         });
@@ -1246,6 +1293,12 @@ describe('model-driven observation', () => {
       .mockResolvedValueOnce(
         answer('read_image', { camera: 'scene', purpose: '判断位置' }),
       )
+      .mockResolvedValueOnce({
+        message: { role: 'assistant', content: 'object visible' },
+        model: profile.model,
+        usage: {},
+        elapsed_ms: 1,
+      })
       .mockResolvedValueOnce(answer('submit_plan', decision()));
     const readImage = vi.fn().mockResolvedValue({
       bytes: Buffer.from('jpeg-data'),
@@ -1270,6 +1323,7 @@ describe('model-driven observation', () => {
     expect(call.mock.calls.map(([p]) => (p as { id: string }).id)).toEqual([
       'test',
       'vision-backup',
+      'test',
     ]);
   });
   it('returns unsupported skill errors to the model to choose a different loop', async () => {

@@ -188,7 +188,7 @@ it('shares provider cooldown across requests and probes it again after expiry', 
   expect(record).toHaveBeenCalledWith(
     expect.objectContaining({ kind: 'provider_cooldown', profile: 'plus' }),
   );
-  now += 31000;
+  now += 121000;
   await request();
   expect((call.mock.calls.at(-1)![0] as ModelProfile).id).toBe('plus');
 });

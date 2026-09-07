@@ -113,6 +113,8 @@ export function planningGoal(goal: Goal): unknown {
       mode: goal.mode,
       plan_scope: goal.plan_scope,
       review_kind: goal.review_kind,
+      checks: goal.checks,
+      final_review: goal.final_review,
       review_reason: goal.review_reason,
       recovery_count: goal.recovery_count,
       steps: selected.map((step) => {
@@ -122,6 +124,8 @@ export function planningGoal(goal: Goal): unknown {
           id: step.id,
           title: step.title,
           skill: step.skill,
+          execution: step.execution,
+          attempt: step.attempt,
           state: step.state,
           params: step.state === 'completed' ? undefined : step.params,
           command_id: step.command_id,
@@ -263,17 +267,25 @@ export function validateVisualReferences(decision: Decision): void {
   for (const action of decision.actions) {
     const params = action.params;
     const destination = object(params.destination);
-    for (const ref of [
-      params.ref,
-      object(params.target).ref,
-      destination.ref,
-      destination.region_ref,
-      destination.cell_ref,
-      object(params.orientation).axis_ref,
-    ]) {
-      if (ref !== undefined && (typeof ref !== 'string' || !pattern.test(ref))) {
+    for (const [field, ref] of Object.entries({
+      ref: params.ref,
+      'target.ref': object(params.target).ref,
+      'destination.ref': destination.ref,
+      'destination.region_ref': destination.region_ref,
+      'destination.cell_ref': destination.cell_ref,
+      'orientation.axis_ref': object(params.orientation).axis_ref,
+    })) {
+      const stableCell =
+        field === 'destination.cell_ref' &&
+        typeof ref === 'string' &&
+        /^grid:[a-f0-9]{32}:\d+:\d+$/.test(ref);
+      if (
+        ref !== undefined &&
+        !stableCell &&
+        (typeof ref !== 'string' || !pattern.test(ref))
+      ) {
         throw new Error(
-          '视觉 ref 必须完整复制 references/visual_candidates 中的 ref（含相机与序号）；request_id/result_ref 不能当作对象或区域引用。普通命名托盘找空位只需 label + selection=free_space，不需要 region_ref。',
+          `${field}=${JSON.stringify(ref)}：视觉 ref 必须完整复制 references/visual_candidates 中的 ref（含相机与序号）；格位也接受实际cell_id。request_id/result_ref不能当作对象引用。普通托盘找空位可用label+selection=free_space。`,
         );
       }
     }

@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=22.11.0"
+    "node": ">=22.13.0"
   },
   "packageManager": "pnpm@11.9.0",
   "scripts": {
@@ -26,6 +26,10 @@
     "test:cov": "vitest run --coverage"
   },
   "dependencies": {
+    "@ai-sdk/provider": "^2.0.3",
+    "@mastra/core": "1.64.0",
+    "@mastra/libsql": "^1.22.3",
+    "@mastra/memory": "^1.28.2",
     "@nestjs/common": "11.0.12",
     "@nestjs/config": "4.0.2",
     "@nestjs/core": "11.0.12",
@@ -38,7 +42,7 @@
     "reflect-metadata": "0.2.2",
     "rxjs": "7.8.2",
     "ws": "^8.21.3",
-    "zod": "3.24.2"
+    "zod": "3.25.76"
   },
   "devDependencies": {
     "@eslint/js": "9.23.0",

@@ -35,7 +35,14 @@ export async function complete(
   messages: Message[],
   tools: Tool[],
   signal?: AbortSignal,
-  options: { maxTokens?: number } = {},
+  options: {
+    maxTokens?: number;
+    toolChoice?:
+      | 'auto'
+      | 'none'
+      | 'required'
+      | { type: 'function'; function: { name: string } };
+  } = {},
 ): Promise<ModelAnswer> {
   const started = performance.now();
   // GLM-5.3 only supports enabled thinking; use its budget control for speed.
@@ -55,7 +62,11 @@ export async function complete(
       stream: false,
       max_tokens: options.maxTokens ?? 6000,
       ...(tools.length
-        ? { tools, tool_choice: 'auto', parallel_tool_calls: true }
+        ? {
+            tools,
+            tool_choice: options.toolChoice ?? 'auto',
+            parallel_tool_calls: true,
+          }
         : {}),
       ...(profile.provider === 'deepseek'
         ? { thinking: { type: profile.thinking ? 'enabled' : 'disabled' } }

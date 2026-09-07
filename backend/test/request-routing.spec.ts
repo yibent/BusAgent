@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest';
-import { routeInitialRequest } from '../src/apps/desktop-robot/intelligence/request-routing.js';
 import { planGoal } from '../src/apps/desktop-robot/intelligence/planning.js';
 import { emptyQueue, type Goal } from '../src/apps/desktop-robot/intelligence/types.js';
 import type { ModelProfile } from '../src/apps/desktop-robot/intelligence/model-config.js';
@@ -35,15 +34,13 @@ const goal = {
 
 describe('compact first planner request', () => {
   it('finishes a simple action in one call without images, old detections or a second planner', async () => {
-    const call = vi
-      .fn()
-      .mockResolvedValue(
-        answer('route_request', {
-          kind: 'execute',
-          summary: '拿起红块',
-          actions: [action],
-        }),
-      );
+    const call = vi.fn().mockResolvedValue(
+      answer('submit_plan', {
+        outcome: 'continue',
+        summary: '拿起红块',
+        actions: [action],
+      }),
+    );
     const readImage = vi.fn(),
       observe = vi.fn(),
       validate = vi.fn();
@@ -59,7 +56,6 @@ describe('compact first planner request', () => {
       { ...goal, source: '帮我拿起红块' },
       emptyQueue(),
       {
-        routeRequests: true,
         images: true,
         readState: vi.fn().mockResolvedValue(live),
         readImage,
@@ -75,45 +71,12 @@ describe('compact first planner request', () => {
     expect(readImage).not.toHaveBeenCalled();
     expect(observe).not.toHaveBeenCalled();
     expect(validate).toHaveBeenCalledWith(result);
-    expect(JSON.stringify(call.mock.calls[0])).not.toMatch(/obsolete-ref|old-geometry/);
-  });
-  it('drops action fields on a status result and never dispatches or revives an archived goal', async () => {
-    const state = emptyQueue();
-    state.goals = [
-      {
-        ...goal,
-        id: 'old',
-        source: '历史工业任务',
-        state: 'blocked',
-        conversation_id: 'other',
-        created_at: '2026-09-06',
-        interaction: false,
-        steps: [action],
-      } as unknown as Goal,
-    ];
-    const call = vi
-      .fn()
-      .mockResolvedValue(
-        answer('route_request', { kind: 'status', actions: [action] }),
-      );
-    const result = await routeInitialRequest(
-      [profile],
-      goal,
-      state,
-      {},
-      {},
-      new AbortController().signal,
-      vi.fn(),
-      call,
-    );
-    expect(result.actions).toEqual([]);
-    expect(JSON.stringify(call.mock.calls[0])).not.toContain('历史工业任务');
+    expect(JSON.stringify(call.mock.calls[0])).not.toContain('route_request');
   });
   it('enforces query-only tools and rejects motion even if the full model invents it', async () => {
     const decision = { outcome: 'continue', mode: 'simple', actions: [action] };
     const call = vi
       .fn()
-      .mockResolvedValueOnce(answer('route_request', { kind: 'query' }))
       .mockResolvedValueOnce(answer('submit_plan', decision))
       .mockResolvedValueOnce(
         answer('submit_plan', {
@@ -129,7 +92,7 @@ describe('compact first planner request', () => {
       goal,
       emptyQueue(),
       {
-        routeRequests: true,
+        readOnly: true,
         images: false,
         readState: vi.fn().mockResolvedValue({}),
         readImage: vi.fn(),

@@ -50,8 +50,11 @@ export class QueueStore implements TaskStore {
     const connection = await this.db.pool.getConnection();
     try {
       await connection.beginTransaction();
+      // Acquire the row's exclusive lock immediately. INSERT IGNORE takes a
+      // shared duplicate-key lock; concurrent callbacks then deadlock when
+      // both SELECT FOR UPDATE statements try to upgrade that shared lock.
       await connection.query(
-        'INSERT IGNORE INTO busagent_goal_queue (id, payload) VALUES (?, ?)',
+        'INSERT INTO busagent_goal_queue (id, payload) VALUES (?, ?) ON DUPLICATE KEY UPDATE id = VALUES(id)',
         ['arm-01', JSON.stringify(emptyQueue())],
       );
       const [rows] = await connection.query<RowDataPacket[]>(

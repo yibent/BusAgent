@@ -8,7 +8,13 @@ const selector = {
       properties: {
         label: { type: 'string' },
         ref: { type: 'string' },
-        cell_ref: { type: 'string' },
+        cell_ref: {
+          type: 'string',
+          description:
+            '真实格位的ref或跨观察cell_id（grid:...:行:列），不能把格位当作待抓物体。',
+          pattern:
+            '^(obs:[a-f0-9]{32}:(scene_camera|side_camera|wrist_camera):[0-9]+|grid:[a-f0-9]{32}:[0-9]+:[0-9]+)$',
+        },
         region_ref: { type: 'string' },
         selection: { type: 'string', enum: ['auto', 'center', 'free_space', 'any'] },
         instance_selection: { type: 'string', enum: ['any'] },
