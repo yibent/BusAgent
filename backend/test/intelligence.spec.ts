@@ -600,6 +600,61 @@ describe('durable goal execution', () => {
     expect(store.state.goals[0]!.steps[1]!.state).toBe('pending');
     expect(planning.planGoal).toHaveBeenCalledTimes(1);
   });
+  it('executes an entire simple batch without intermediate or final model calls even with supervision enabled', async () => {
+    const models = (engine as unknown as { models: ModelConfig }).models;
+    vi.spyOn(models, 'settings').mockResolvedValue({
+      images: true,
+      supervisorEnabled: true,
+      recoveryBudget: 3,
+    } as Awaited<ReturnType<ModelConfig['settings']>>);
+    vi.mocked(planning.planGoal).mockResolvedValueOnce(
+      decision({
+        mode: 'simple',
+        plan_scope: 'complete',
+        final_review: false,
+      }),
+    );
+    await engine.handle(
+      context('simple-batch', 'intent.created', { text: '拿起绿块放到桌面空处' }),
+    );
+    await tick();
+    await drain();
+    expect(store.state.goals[0]!.steps).toHaveLength(2);
+    for (let i = 0; i < 2; i++) {
+      await tick();
+      const step = store.state.goals[0]!.steps[i]!;
+      expect(step.state).toBe('dispatching');
+      await engine.handle(
+        context(
+          'simple-done-' + i,
+          'execution.completed',
+          {
+            command_id: step.command_id,
+            holding: { verified: i === 0 },
+          },
+          step.task_id,
+        ),
+      );
+      expect(planning.planGoal).toHaveBeenCalledTimes(1);
+    }
+    await tick();
+    await tick();
+    expect(store.state.goals[0]!.state).toBe('completed');
+    expect(store.state.goals[0]!.steps.every((s) => s.state === 'completed')).toBe(
+      true,
+    );
+    expect(planning.planGoal).toHaveBeenCalledTimes(1);
+    expect(
+      publish.mock.calls.filter(
+        ([, e]) => (e as { event_type: string }).event_type === 'plan.proposed',
+      ),
+    ).toHaveLength(2);
+    expect(
+      publish.mock.calls.some(
+        ([, e]) => (e as { event_type: string }).event_type === 'supervision.requested',
+      ),
+    ).toBe(false);
+  });
   it('dispatches a complete complex plan and finishes with supervision disabled', async () => {
     const models = (engine as unknown as { models: ModelConfig }).models;
     vi.spyOn(models, 'settings').mockResolvedValue({

@@ -38,7 +38,9 @@ export const actionSchema = z
   }));
 export type Action = z.infer<typeof actionSchema>;
 export const decisionSchema = z.object({
-  mode: z.enum(['simple', 'complex']).default('complex'),
+  // Legacy submissions without a classification must not manufacture a stage
+  // boundary and an extra model review. Mastra explicitly marks complex work.
+  mode: z.enum(['simple', 'complex']).default('simple'),
   summary: z.string().default(''),
   completion: z.string().default(''),
   actions: z.array(actionSchema).default([]),

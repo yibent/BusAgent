@@ -86,6 +86,105 @@ const answer = (calls: [string, unknown][]): ModelAnswer => ({
 });
 afterEach(() => clearModelCooldowns());
 describe('Mastra owns the decision loop', () => {
+  it.each([
+    {
+      name: 'simple',
+      mode: 'simple',
+      scope: 'complete',
+      review: undefined,
+      final: false,
+    },
+    {
+      name: 'legacy finite batch',
+      mode: undefined,
+      scope: undefined,
+      review: undefined,
+      final: false,
+    },
+    {
+      name: 'complex stage',
+      mode: 'complex',
+      scope: 'stage',
+      review: undefined,
+      final: true,
+    },
+    {
+      name: 'explicit simple review',
+      mode: 'simple',
+      scope: 'complete',
+      review: true,
+      final: true,
+    },
+  ])(
+    'accepts a $name decision and the whole sequence in one response',
+    async ({ mode, scope, review, final }) => {
+      const call = vi.fn().mockResolvedValue(
+        answer([
+          [
+            'submit_plan',
+            {
+              ...(mode ? { mode } : {}),
+              ...(scope ? { plan_scope: scope } : {}),
+              ...(review === undefined ? {} : { final_review: review }),
+              outcome: 'continue',
+              actions: [
+                { title: '拿起', skill: 'grasp', params: { target: 'cylinder' } },
+                {
+                  title: '放下',
+                  skill: 'place_held',
+                  params: { destination: { label: 'table', selection: 'free_space' } },
+                },
+                { title: '回位', skill: 'home', params: {} },
+              ],
+            },
+          ],
+        ]),
+      );
+      const readState = vi.fn().mockResolvedValue({
+        holding: { verified: false },
+        capabilities: { skills: ['grasp', 'place_held', 'home'] },
+      });
+      const readImage = vi.fn(),
+        observe = vi.fn();
+      const result = await planGoal(
+        profile,
+        'planner',
+        {
+          ...goal(),
+          id: randomUUID(),
+          steps: [],
+          source: '拿起一个圆柱放到桌面空处，再回位',
+        },
+        emptyQueue(),
+        {
+          persistBrain: true,
+          images: true,
+          readState,
+          readImage,
+          observe,
+          record: vi.fn(),
+        },
+        AbortSignal.timeout(5000),
+        call,
+      );
+      expect(result.mode).toBe(mode ?? 'simple');
+      expect(result.final_review).toBe(final);
+      expect(result.plan_scope).toBe(scope);
+      expect(result.actions.map((a) => a.skill)).toEqual([
+        'grasp',
+        'place_held',
+        'home',
+      ]);
+      expect(result.actions.every((a) => !a.review_after)).toBe(true);
+      expect(result.actions.every((a) => a.execution?.loop === 'fast_then_slow')).toBe(
+        true,
+      );
+      expect(call).toHaveBeenCalledOnce();
+      expect(readState).toHaveBeenCalledOnce();
+      expect(readImage).not.toHaveBeenCalled();
+      expect(observe).not.toHaveBeenCalled();
+    },
+  );
   it('accepts the stable cell identity actually returned by the geometry tool', () => {
     const decision = decisionSchema.parse({
       outcome: 'continue',

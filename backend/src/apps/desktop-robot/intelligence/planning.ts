@@ -239,15 +239,30 @@ export const TOOLS: Tool[] = [
     function: {
       name: 'submit_plan',
       description:
-        '提交可执行计划；复杂任务也直接提供actions，程序按plan_scope推进阶段或完成任务。',
+        '在同一次提交中判断复杂度并给出动作序列。简单任务一次提交全部actions，正常执行后直接完成；复杂任务按需要分批，提交后不再调用模型确认计划。',
       parameters: object(
         {
           queue_update: { type: 'string', enum: ['replace_pending', 'append'] },
-          final_review: { type: 'boolean' },
-          mode: { type: 'string', enum: ['simple', 'complex'] },
+          final_review: {
+            type: 'boolean',
+            description:
+              '是否执行完再调用Mastra验收。简单任务通常false，控制器/局部监督反馈即可结束；用户明确要求或需要语义验收时true。',
+          },
+          mode: {
+            type: 'string',
+            enum: ['simple', 'complex'],
+            default: 'simple',
+            description:
+              '由你在本次规划判断。simple=明确目标的完整有限动作序列，多步也可以简单；complex=需要条件循环、执行中获取新证据再决定后续工作。与快慢环选择独立。',
+          },
           summary: { type: 'string' },
           completion: { type: 'string' },
-          plan_scope: { type: 'string', enum: ['complete', 'stage'] },
+          plan_scope: {
+            type: 'string',
+            enum: ['complete', 'stage'],
+            description:
+              'complete=已提交整个目标所需序列，简单任务使用此值；stage=只提交当前可确定批次，结束后必须再决策。复杂任务能一次给完时也用complete。',
+          },
           outcome: {
             type: 'string',
             enum: ['continue', 'complete', 'blocked', 'clarify', 'chat'],
@@ -260,7 +275,11 @@ export const TOOLS: Tool[] = [
                 title: { type: 'string' },
                 skill: { type: 'string' },
                 params: actionParamsJsonSchema,
-                review_after: { type: 'boolean' },
+                review_after: {
+                  type: 'boolean',
+                  description:
+                    '此动作之后是否必须重新调用Mastra决策。普通连续动作false；仅后续步骤依赖新证据/决策时true，局部异步监督在execution中设置。',
+                },
                 execution: executionPolicyJsonSchema,
               },
               ['title', 'skill', 'params'],
