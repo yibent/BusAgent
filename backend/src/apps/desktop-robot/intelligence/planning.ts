@@ -301,12 +301,19 @@ export async function planGoal(
     },
   ];
   // This is a per-inference budget, not a limit on queued tasks or task length.
-  for (let round = 0; round < (context.toolRounds ?? 6); round++) {
+  for (let round = 0; round <= (context.toolRounds ?? 6); round++) {
     signal.throwIfAborted();
+    const finalRound = round === (context.toolRounds ?? 6);
+    if (finalRound)
+      messages.push({
+        role: 'user',
+        content:
+          '本轮观察预算已用完。现在必须调用 submit_plan，把已获得的证据转成具体步骤；仍需观察时可安排 perceive 并 review_after=true，保留完整原始目标。不要再请求工具观察，也不要把尚未执行的动作当成完成。',
+      });
     const answer: ModelAnswer = await routedCompletion(
       [profile, ...(context.fallbackProfiles ?? [])],
       messages,
-      TOOLS,
+      finalRound ? TOOLS.filter((tool) => tool.function.name === 'submit_plan') : TOOLS,
       signal,
       (event) => context.record(event),
       call,
@@ -351,6 +358,8 @@ export async function planGoal(
       let result: unknown;
       try {
         const args = JSON.parse(tool.function.arguments) as Record<string, unknown>;
+        if (finalRound && tool.function.name !== 'submit_plan')
+          throw new Error('请先提交基于当前证据的计划。');
         if (tool.function.name === 'submit_plan') {
           const decision = decisionSchema.parse(args);
           validateVisualReferences(decision);
@@ -365,15 +374,40 @@ export async function planGoal(
             !String(args.description ?? '').trim()
           )
             throw new Error('请提供目标描述和相机。');
-          const frame = await context.readImage(String(args.camera));
-          const selected = await selectImageObject(
-            [profile, ...(context.fallbackProfiles ?? [])],
-            frame.bytes,
-            String(args.description),
-            signal,
-            context.record,
-            call,
-          );
+          let camera = String(args.camera);
+          let frame = await context.readImage(camera);
+          let selected;
+          try {
+            selected = await selectImageObject(
+              [profile, ...(context.fallbackProfiles ?? [])],
+              frame.bytes,
+              String(args.description),
+              signal,
+              context.record,
+              call,
+            );
+          } catch (error) {
+            signal.throwIfAborted();
+            // A single view can hide an end face or turn reflection into an
+            // apparent edge. One independent view is useful new evidence.
+            const alternate = camera === 'side' ? 'scene' : 'side';
+            await context.record({
+              kind: 'visual_view_fallback',
+              camera,
+              alternate,
+              reason: (error as Error).message,
+            });
+            camera = alternate;
+            frame = await context.readImage(camera);
+            selected = await selectImageObject(
+              [profile, ...(context.fallbackProfiles ?? [])],
+              frame.bytes,
+              String(args.description),
+              signal,
+              context.record,
+              call,
+            );
+          }
           const observed = await context.observe(
             {
               scope: 'target',
@@ -381,7 +415,7 @@ export async function planGoal(
               selection: 'one',
               grounding: {
                 snapshot_ref: frame.metadata.snapshot_ref,
-                camera: String(args.camera) + '_camera',
+                camera: camera + '_camera',
                 box_normalized: selected.box_normalized,
               },
               ...(args.inspect ? { inspect: args.inspect } : {}),

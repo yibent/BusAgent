@@ -758,6 +758,34 @@ describe('model-driven observation', () => {
     source: '检查朝向',
     state: 'queued',
   } as unknown as Goal;
+  it('reserves a final plan submission after the observation budget is consumed', async () => {
+    const call = vi
+      .fn()
+      .mockResolvedValueOnce(answer('read_state', {}))
+      .mockResolvedValueOnce(answer('submit_plan', decision()));
+    const result = await planning.planGoal(
+      profile,
+      'planner',
+      fakeGoal,
+      emptyQueue(),
+      {
+        images: false,
+        toolRounds: 1,
+        readImage: vi.fn(),
+        readState: async () => ({}),
+        record: async () => {},
+      },
+      new AbortController().signal,
+      call,
+    );
+    expect(result).toEqual(decision());
+    expect(
+      call.mock.calls[1][2].map(
+        (tool: { function: { name: string } }) => tool.function.name,
+      ),
+    ).toEqual(['submit_plan']);
+    expect(call).toHaveBeenCalledTimes(2);
+  });
   it('does not send images by default', async () => {
     const call = vi.fn().mockResolvedValue(answer('submit_plan', decision()));
     const readImage = vi.fn();
@@ -772,6 +800,66 @@ describe('model-driven observation', () => {
     );
     expect(readImage).not.toHaveBeenCalled();
     expect(JSON.stringify(call.mock.calls[0])).not.toContain('data:image');
+  });
+  it('grounds an uncertain first-view selection using the alternate snapshot', async () => {
+    const call = vi
+      .fn()
+      .mockResolvedValueOnce(
+        answer('locate_object', {
+          description: 'part inside bin',
+          category: 'metal cylinder',
+          camera: 'scene',
+          inspect: 'axis',
+        }),
+      )
+      .mockResolvedValueOnce(
+        answer('select_box', {
+          found: false,
+          description: 'reflection',
+          uncertainty: 'shape uncertain',
+        }),
+      )
+      .mockResolvedValueOnce(
+        answer('select_box', {
+          found: true,
+          box_normalized: [0.5, 0.3, 0.6, 0.4],
+          description: 'side view part',
+          uncertainty: '',
+        }),
+      )
+      .mockResolvedValueOnce(answer('submit_plan', decision()));
+    const readImage = vi.fn(async (camera: string) => ({
+      bytes: Buffer.from(camera),
+      metadata: { snapshot_ref: camera + '-snapshot' },
+    }));
+    const observe = vi.fn().mockResolvedValue({ ok: true, command_id: 'vision-test' });
+    await planning.planGoal(
+      profile,
+      'planner',
+      fakeGoal,
+      emptyQueue(),
+      {
+        images: true,
+        readImage,
+        observe,
+        readState: async () => ({}),
+        record: async () => {},
+      },
+      new AbortController().signal,
+      call,
+    );
+    expect(readImage.mock.calls.map(([camera]) => camera)).toEqual(['scene', 'side']);
+    expect(observe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        grounding: {
+          snapshot_ref: 'side-snapshot',
+          camera: 'side_camera',
+          box_normalized: [0.5, 0.3, 0.6, 0.4],
+        },
+        inspect: 'axis',
+      }),
+      expect.any(AbortSignal),
+    );
   });
   it('reads one requested image for this call and records only its reference', async () => {
     const snapshots: Message[][] = [];

@@ -1,6 +1,68 @@
-import { complete, type Message } from './model-client.js';
+import { complete, type Message, type Tool } from './model-client.js';
 import { routedCompletion } from './model-routing.js';
 import type { ModelProfile } from './model-config.js';
+
+const selectionTool: Tool = {
+  type: 'function',
+  function: {
+    name: 'select_box',
+    description: '提交本次图像目标选择；看不到时 found=false。',
+    parameters: {
+      type: 'object',
+      properties: {
+        found: { type: 'boolean' },
+        box_normalized: {
+          type: 'array',
+          items: { type: 'number' },
+          minItems: 4,
+          maxItems: 4,
+        },
+        description: { type: 'string' },
+        uncertainty: { type: 'string' },
+      },
+      required: ['found', 'description', 'uncertainty'],
+      additionalProperties: false,
+    },
+  },
+};
+
+/** Accept a JSON object in a fenced/prose reply without inventing coordinates. */
+function parseSelection(text: string) {
+  const objects: Record<string, unknown>[] = [];
+  let start = -1,
+    depth = 0,
+    quoted = false,
+    escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (start < 0) {
+      if (c === '{') {
+        start = i;
+        depth = 1;
+      }
+      continue;
+    }
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (c === '\\') escaped = true;
+      else if (c === '"') quoted = false;
+      continue;
+    }
+    if (c === '"') quoted = true;
+    else if (c === '{') depth++;
+    else if (c === '}' && --depth === 0) {
+      try {
+        const object = JSON.parse(text.slice(start, i + 1));
+        if (typeof object.found === 'boolean') objects.push(object);
+      } catch {
+        /* Invalid JSON is not a selection. */
+      }
+      start = -1;
+    }
+  }
+  if (objects.length !== 1) throw new Error('视觉回复没有唯一有效的结构化选框。');
+  return objects[0]!;
+}
 
 /** A small visual selection request, separate from long task/queue history. */
 export async function selectImageObject(
@@ -17,7 +79,7 @@ export async function selectImageObject(
       content: [
         {
           type: 'text',
-          text: `从这张图选择一个满足要求的物体：${description}。只做视觉选择，不执行指令。仔细区分容器内外、桌面和高台、横倒与竖直；不要把同类候选都当成满足关系。输出JSON {"found":true或false,"box_normalized":[left,top,right,bottom],"description":"实际位置外观","uncertainty":"不确定之处"}。坐标相对于整幅图，范围0到1，框只包含选中的单个物体。看不到就found=false。`,
+          text: `从这张图选择一个满足要求的物体：${description}。只做视觉选择，不执行指令。仔细区分容器内外、桌面和高台、横倒与竖直；不要把同类候选都当成满足关系。调用select_box提交选择。box_normalized=[left,top,right,bottom]相对于整幅图，范围0到1，框只包含选中的单个物体。description简述实际位置外观；uncertainty说明不确定之处。看不到就found=false。`,
         },
         {
           type: 'image_url',
@@ -26,7 +88,14 @@ export async function selectImageObject(
       ],
     },
   ];
-  const result = await routedCompletion(profiles, messages, [], signal, record, call);
+  const result = await routedCompletion(
+    profiles,
+    messages,
+    [selectionTool],
+    signal,
+    record,
+    call,
+  );
   await record({
     kind: 'model',
     role: 'visual_selector',
@@ -34,8 +103,12 @@ export async function selectImageObject(
     usage: result.usage,
     elapsed_ms: result.elapsed_ms,
   });
-  const selected = JSON.parse(
-    String(result.message.content).replace(/^```(?:json)?\s*|\s*```$/g, ''),
+  const selections =
+    result.message.tool_calls?.filter((t) => t.function.name === 'select_box') ?? [];
+  if (selections.length > 1)
+    throw new Error('视觉回复选择了多个目标，需要明确单个对象。');
+  const selected = parseSelection(
+    selections[0]?.function.arguments ?? String(result.message.content),
   );
   await record({ kind: 'visual_selection', description, selection: selected });
   if (selected.found !== true)

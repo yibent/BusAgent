@@ -18,6 +18,43 @@ const answer = (content: unknown) => ({
   message: { role: 'assistant' as const, content: JSON.stringify(content) },
 });
 describe('short-context visual grounding', () => {
+  it('accepts structured tools or an explanatory fenced reply without repeating vision', async () => {
+    const selected = {
+      found: true,
+      box_normalized: [0.5, 0.3, 0.56, 0.36],
+      description: 'part {inside}',
+      uncertainty: '',
+    };
+    for (const message of [
+      {
+        role: 'assistant' as const,
+        content: 'Based on the image:\n```json\n' + JSON.stringify(selected) + '\n```',
+      },
+      {
+        role: 'assistant' as const,
+        content: null,
+        tool_calls: [
+          {
+            id: 'box',
+            type: 'function' as const,
+            function: { name: 'select_box', arguments: JSON.stringify(selected) },
+          },
+        ],
+      },
+    ]) {
+      const call = vi.fn().mockResolvedValue({ ...answer(selected), message });
+      const result = await selectImageObject(
+        [profile],
+        Buffer.from('pixels'),
+        'inside part',
+        new AbortController().signal,
+        vi.fn(),
+        call,
+      );
+      expect(result.box_normalized).toEqual(selected.box_normalized);
+      expect(call).toHaveBeenCalledTimes(1);
+    }
+  });
   it('keeps relation selection isolated from task history and records model cost', async () => {
     const call = vi.fn().mockResolvedValue(
       answer({
