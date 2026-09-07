@@ -6,6 +6,7 @@ import {
   statusReply,
 } from './interaction-routing.js';
 import { routeInitialRequest } from './request-routing.js';
+import { actionParamsJsonSchema } from './action-params.js';
 import { observeOperation } from './operation-telemetry.js';
 import { markExecutionLoop } from '../../../observability/execution-span.js';
 import { estimateTokens } from '../../../modules/conversation/context-format.js';
@@ -244,7 +245,7 @@ export const TOOLS: Tool[] = [
               {
                 title: { type: 'string' },
                 skill: { type: 'string' },
-                params: { type: 'object', additionalProperties: true },
+                params: actionParamsJsonSchema,
                 review_after: { type: 'boolean' },
               },
               ['title', 'skill', 'params', 'review_after'],

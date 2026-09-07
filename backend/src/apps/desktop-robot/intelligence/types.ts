@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { normalizeActionParams } from './action-params.js';
 
 export const intelligenceEnabled = () =>
   process.env.BUSAGENT_ROBOT === 'franka_panda' &&
@@ -22,12 +23,17 @@ export type GoalState =
   | 'blocked'
   | 'completed'
   | 'cancelled';
-export const actionSchema = z.object({
-  title: z.string().min(1),
-  skill: z.string().min(1),
-  params: z.record(z.unknown()).default({}),
-  review_after: z.boolean().default(false),
-});
+export const actionSchema = z
+  .object({
+    title: z.string().min(1),
+    skill: z.string().min(1),
+    params: z.record(z.unknown()).default({}),
+    review_after: z.boolean().default(false),
+  })
+  .transform((action) => ({
+    ...action,
+    params: normalizeActionParams(action.skill, action.params),
+  }));
 export type Action = z.infer<typeof actionSchema>;
 export const decisionSchema = z.object({
   mode: z.enum(['simple', 'complex']).default('complex'),

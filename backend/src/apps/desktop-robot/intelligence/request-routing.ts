@@ -4,6 +4,7 @@ import { complete, type Tool } from './model-client.js';
 import type { ModelProfile } from './model-config.js';
 import { actionSchema, type Goal, type QueueState } from './types.js';
 import { contextualGoals } from './interaction-routing.js';
+import { actionParamsJsonSchema } from './action-params.js';
 
 const routeSchema = z.object({
   kind: z.enum(['reply', 'status', 'query', 'scene', 'execute', 'plan', 'control']),
@@ -35,7 +36,7 @@ const tool: Tool = {
             properties: {
               title: { type: 'string' },
               skill: { type: 'string' },
-              params: { type: 'object', additionalProperties: true },
+              params: actionParamsJsonSchema,
               review_after: { type: 'boolean' },
             },
             required: ['title', 'skill', 'params', 'review_after'],
