@@ -265,7 +265,16 @@ describe('Mastra owns the decision loop', () => {
       '"enum":["grasp","place_held"]',
     );
   });
-  it('lets native TokenLimiter retire completed tool steps without losing the goal or orphaning results', async () => {
+  it('lets native TokenLimiter retire tool history without losing the goal, held object or pending queue', async () => {
+    const recovery = goal();
+    recovery.steps[0]!.state = 'failed';
+    recovery.steps[0]!.result = { failure: { code: 'NO_FREE_SPACE' } };
+    recovery.steps.push({
+      ...step(),
+      id: 'pending-home',
+      state: 'pending',
+      skill: 'home',
+    });
     let count = 0;
     const call = vi.fn(
       (
@@ -273,6 +282,19 @@ describe('Mastra owns the decision loop', () => {
         messages: import('../src/apps/desktop-robot/intelligence/model-client.js').Message[],
       ) => {
         expect(JSON.stringify(messages)).toContain('retain-this-original-goal');
+        const control = messages.filter(
+          (m) =>
+            m.role === 'system' &&
+            typeof m.content === 'string' &&
+            m.content.startsWith('当前执行事实'),
+        );
+        expect(control).toHaveLength(1);
+        const content = control[0]!.content as string;
+        expect(JSON.parse(content.slice(content.indexOf('{')))).toMatchObject({
+          holding: { verified: true, object_id: 'object:held' },
+          failed: [{ id: 's', failure: { code: 'NO_FREE_SPACE' } }],
+          pending: [{ id: 'pending-home', skill: 'home' }],
+        });
         const ids = messages
           .flatMap((m) => m.tool_calls ?? [])
           .map((c) => c.id)
@@ -286,7 +308,24 @@ describe('Mastra owns the decision loop', () => {
         return Promise.resolve(
           count++ < 12
             ? answer([['read_history', { query: `part-${count}` }]])
-            : answer([['submit_plan', { outcome: 'continue', actions: [action] }]]),
+            : answer([
+                [
+                  'submit_plan',
+                  {
+                    outcome: 'continue',
+                    actions: [
+                      {
+                        ...action,
+                        skill: 'place_held',
+                        params: {
+                          destination: { label: 'table', selection: 'free_space' },
+                        },
+                      },
+                    ],
+                    queue_update: 'replace_pending',
+                  },
+                ],
+              ]),
         );
       },
     );
@@ -296,14 +335,15 @@ describe('Mastra owns the decision loop', () => {
     const result = await planGoal(
       profile,
       'planner',
-      { ...goal(), source: 'retain-this-original-goal', steps: [] },
+      { ...recovery, source: 'retain-this-original-goal' },
       emptyQueue(),
       {
         images: false,
-        contextBudgetTokens: 8000,
+        contextBudgetTokens: 10000,
         toolResultBudgetTokens: 1000,
         toolRounds: 14,
-        readState: () => Promise.resolve({}),
+        readState: () =>
+          Promise.resolve({ holding: { verified: true, object_id: 'object:held' } }),
         readImage: vi.fn(),
         readHistory: ({ query }) =>
           Promise.resolve({
@@ -347,6 +387,9 @@ describe('Mastra owns the decision loop', () => {
       emptyQueue(),
       {
         images: false,
+        conversation: {
+          history: 'large conversation with many previous tasks '.repeat(2000),
+        },
         readState: () => Promise.resolve({ holding: { verified: true } }),
         readImage: vi.fn(),
         record: vi.fn(),

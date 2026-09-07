@@ -99,6 +99,36 @@ function observation(value: unknown): unknown {
   return summary;
 }
 
+/** Small control facts that must survive native history trimming at every step. */
+export function executionBrief(goal: Goal, live: Record<string, unknown>) {
+  const pending = goal.steps.filter((s) => s.state === 'pending');
+  const holding = object(live.holding);
+  return {
+    goal_id: goal.id,
+    continuation: goal.steps.length > 0,
+    holding: {
+      verified: typeof holding.verified === 'boolean' ? holding.verified : null,
+      object_id: text(holding.object_id).slice(0, 128) || undefined,
+      label: text(holding.label).slice(0, 96) || undefined,
+    },
+    failed: goal.steps
+      .filter((s) => s.state === 'failed')
+      .slice(-2)
+      .map((s) => {
+        const wrapper = object(s.result);
+        const result = object(wrapper.result ?? wrapper);
+        return {
+          id: s.id,
+          skill: s.skill,
+          failure: pick(object(result.failure), ['code', 'phase']),
+        };
+      }),
+    pending: pending.slice(0, 8).map((s) => ({ id: s.id, skill: s.skill })),
+    pending_count: pending.length,
+    completed_count: goal.steps.filter((s) => s.state === 'completed').length,
+  };
+}
+
 export function planningGoal(goal: Goal): unknown {
   const active = goal.steps.filter((s) =>
     ['pending', 'running', 'dispatching', 'unknown', 'failed'].includes(s.state),
