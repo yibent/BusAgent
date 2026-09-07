@@ -283,6 +283,25 @@ describe('durable goal execution', () => {
     expect(store.state.goals[0]!.steps[0]!.state).toBe('failed');
     expect(store.state.goals[0]!.message).toContain('自动监督 LLM 已关闭');
   });
+  it('plans a grasp for the following placement orientation without changing queue intent', async () => {
+    await engine.handle(context('oriented-transfer'));
+    await tick();
+    await drain();
+    const goal = store.state.goals[0]!;
+    const first = goal.steps[0]!;
+    const second = goal.steps[1]!;
+    const orientation = {
+      axis_ref: `obs:${'a'.repeat(32)}:scene_camera:0`,
+      endpoint: 0,
+      direction: 'up',
+    };
+    second.params.orientation = orientation;
+    const plan = executablePlan(goal, first);
+    expect(plan.steps[0]!.params.orientation).toEqual(orientation);
+    expect(first.params.orientation).toBeUndefined();
+    second.skill = 'grasp';
+    expect(executablePlan(goal, first).steps[0]!.params.orientation).toBeUndefined();
+  });
   it('dispatches the next step only after the first physical result, with stable command ids', async () => {
     await engine.handle(context('input'));
     await tick();

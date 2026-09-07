@@ -109,6 +109,24 @@ export function completionReply(goal: Goal): string {
 }
 
 export function executablePlan(goal: Goal, step: QueueStep): RobotPlan {
+  const params = { ...step.params };
+  if (step.skill === 'grasp' && !params.orientation) {
+    const index = goal.steps.findIndex((item) => item.id === step.id);
+    const nextManipulation =
+      index < 0
+        ? undefined
+        : goal.steps
+            .slice(index + 1)
+            .find(
+              (item) =>
+                item.state === 'pending' &&
+                ['grasp', 'pick_place', 'place_held'].includes(item.skill),
+            );
+    // Choose the grasp for the intended placement, including when the planner
+    // expresses the same transfer as two separate queue steps.
+    if (nextManipulation?.skill === 'place_held' && nextManipulation.params.orientation)
+      params.orientation = structuredClone(nextManipulation.params.orientation);
+  }
   return {
     instruction_id: goal.input_event_id,
     task_version: 1,
@@ -139,7 +157,7 @@ export function executablePlan(goal: Goal, step: QueueStep): RobotPlan {
       clarification_question: null,
       source_text: goal.source,
     },
-    steps: [{ id: 1, skill: step.skill, params: step.params, why: step.title }],
+    steps: [{ id: 1, skill: step.skill, params, why: step.title }],
   };
 }
 
