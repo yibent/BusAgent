@@ -1,9 +1,38 @@
-import { semanticEvidence, type Decision } from './types.js';
+import { semanticEvidence, type Decision, type Goal } from './types.js';
 const text = (x: unknown) => (typeof x === 'string' ? x : '');
 const object = (x: unknown): Record<string, unknown> =>
   x && typeof x === 'object' && !Array.isArray(x) ? (x as Record<string, unknown>) : {};
 const pick = (row: Record<string, unknown>, keys: string[]) =>
   Object.fromEntries(keys.filter((k) => row[k] !== undefined).map((k) => [k, row[k]]));
+
+function collection(value: unknown): unknown {
+  const row = object(value);
+  return {
+    ...pick(row, [
+      'label',
+      'count',
+      'complete',
+      'count_basis',
+      'grouping',
+      'unlocalized_count',
+      'observed_at',
+      'observation_ref',
+      'groups',
+    ]),
+    instances: (Array.isArray(row.instances) ? row.instances : []).map((raw) =>
+      pick(object(raw), [
+        'ref',
+        'track_id',
+        'score',
+        'semantic_status',
+        'position_m',
+        'extent_m',
+        'camera',
+        'box_normalized',
+      ]),
+    ),
+  };
+}
 
 /** Keep all same-frame instances; discard older views of the same category. */
 export function latestReferences(value: unknown): unknown[] {
@@ -39,7 +68,17 @@ function observation(value: unknown): unknown {
     'semantic_status',
     'fallback_reasons',
     'references',
+    'collection',
+    'geometry',
   ]);
+  // A box/ref must appear once per observation, not in references, candidates,
+  // views and again in every past execution result.
+  const hasReferences = Array.isArray(row.references) && row.references.length > 0;
+  if (hasReferences) summary.references = row.references;
+  if (row.collection) {
+    summary.collection = collection(row.collection);
+    delete summary.references;
+  }
   if (Array.isArray(row.views))
     summary.views = row.views.map((v) =>
       pick(object(v), [
@@ -54,12 +93,41 @@ function observation(value: unknown): unknown {
         'ref',
         'loop',
         'fallback_reason',
-        'objects',
-        'regions',
-        'candidates',
+        ...(hasReferences ? [] : ['objects', 'regions', 'candidates']),
       ]),
     );
   return summary;
+}
+
+export function planningGoal(goal: Goal): unknown {
+  return planningEvidence({
+    ...goal,
+    steps: goal.steps.slice(-32).map((step) => {
+      const wrapper = object(step.result);
+      const result = object(wrapper.result ?? wrapper);
+      return {
+        ...step,
+        result: pick(result, [
+          'ok',
+          'state',
+          'failure',
+          'holding',
+          'evaluation',
+          'postconditions',
+          'post_action_snapshot',
+          'review_required',
+          'review_reason',
+          'command_id',
+          'elapsed_s',
+        ]),
+        result_message: text(result.message).slice(0, 400),
+        observation_ref: object(result.vision).request_id,
+      };
+    }),
+    earlier_step_count: Math.max(0, goal.steps.length - 32),
+    completed_step_count: goal.steps.filter((step) => step.state === 'completed')
+      .length,
+  });
 }
 
 /** The full evidence stays in Bus/MySQL. LLMs receive the facts needed to decide. */
@@ -71,6 +139,29 @@ export function planningEvidence(value: unknown): unknown {
       Object.entries(object(x)).flatMap(([key, v]) => {
         if (key === 'physical_witness' || key === 'stages' || key === 'memory_id')
           return [];
+        if (key === 'collection') return [[key, collection(v)]];
+        if (key === 'world') {
+          const world = object(v);
+          return [
+            [
+              key,
+              {
+                ...world,
+                collections: (Array.isArray(world.collections)
+                  ? world.collections
+                  : []
+                ).map(collection),
+              },
+            ],
+          ];
+        }
+        if (key === 'vision' && object(x).collection)
+          return [
+            [
+              key,
+              pick(object(v), ['request_id', 'label', 'observed_at', 'ok', 'scope']),
+            ],
+          ];
         if (key === 'visual_candidates') return [[key, latestReferences(v)]];
         if (key === 'vision' || key === 'observation') return [[key, observation(v)]];
         if (key === 'recent_observations') {
@@ -81,7 +172,26 @@ export function planningEvidence(value: unknown): unknown {
             byTarget.delete(label);
             byTarget.set(label, observation(row));
           }
-          return [[key, [...byTarget.values()].slice(-8)]];
+          // Historical observations identify available evidence; the current
+          // observation/world carries the actual candidate list.
+          return [
+            [
+              key,
+              [...byTarget.values()]
+                .slice(-8)
+                .map((raw) =>
+                  pick(object(raw), [
+                    'request_id',
+                    'label',
+                    'scope',
+                    'observed_at',
+                    'ok',
+                    'error',
+                    'semantic_status',
+                  ]),
+                ),
+            ],
+          ];
         }
         return [[key, visit(v)]];
       }),
@@ -100,6 +210,8 @@ export function validateVisualReferences(decision: Decision): void {
       object(params.target).ref,
       destination.ref,
       destination.region_ref,
+      destination.cell_ref,
+      object(params.orientation).axis_ref,
     ]) {
       if (ref !== undefined && (typeof ref !== 'string' || !pattern.test(ref))) {
         throw new Error(

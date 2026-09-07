@@ -19,6 +19,7 @@ import { Logger } from '../../../common/logger.js';
 import { QueueStore, type QueuedEvent } from './queue-store.js';
 import { ModelConfig } from './model-config.js';
 import { planGoal } from './planning.js';
+import { observeScene, readObservation } from './observation-tools.js';
 import {
   ended,
   inFlight,
@@ -173,10 +174,12 @@ export function applyResult(
   if (terminal === 'completed') {
     if (['grasp', 'pick_place', 'place_held'].includes(step.skill))
       goal.recovery_count = 0;
-    goal.state = step.review_after ? 'review' : 'running';
-    goal.review_reason = step.review_after
-      ? `步骤“${step.title}”已完成，需要根据观察决定后续。`
-      : '';
+    goal.state = step.review_after || result.review_required ? 'review' : 'running';
+    goal.review_reason = result.review_required
+      ? String(result.review_reason ?? '动作后证据不确定，需要检查已完成动作。')
+      : step.review_after
+        ? `步骤“${step.title}”已完成，需要根据观察决定后续。`
+        : '';
   } else {
     goal.state = 'review';
     goal.review_reason = `步骤“${step.title}”结果 ${terminal}；保留后续任务，根据当前持物和观测决定恢复。`;
@@ -248,6 +251,9 @@ export class TaskEngine
         capabilities[key] = (capabilities[key] as unknown[]).map((row) => ({
           label: record(row).label,
         }));
+    const world = record(status.world);
+    const hasWorld = Array.isArray(world.collections) && world.collections.length > 0;
+    const observation = record(status.vision);
     return {
       runtime_id: status.runtime_id,
       available: true,
@@ -256,8 +262,19 @@ export class TaskEngine
       command_id: status.command_id,
       holding: semanticEvidence(status.holding),
       capabilities,
-      observation: semanticEvidence(status.vision),
-      visual_candidates: semanticEvidence(status.visual_candidates),
+      observation: semanticEvidence(
+        hasWorld && observation.collection
+          ? {
+              request_id: observation.request_id,
+              scope: observation.scope,
+              label: observation.label,
+              observed_at: observation.observed_at,
+              ok: observation.ok,
+            }
+          : observation,
+      ),
+      visual_candidates: hasWorld ? [] : semanticEvidence(status.visual_candidates),
+      world: semanticEvidence(status.world),
       vision_tools: [
         {
           name: 'fast',
@@ -277,11 +294,29 @@ export class TaskEngine
       ],
     };
   }
-  async image(camera: string) {
+  async image(camera: string, observationRef?: string) {
     if (!['scene', 'side', 'wrist'].includes(camera)) throw new Error('Unknown camera');
-    const response = await fetch(`${this.base()}/api/frame/${camera}`, {
-      signal: AbortSignal.timeout(3000),
-    });
+    if (observationRef && !/^[a-f0-9]{32}$/.test(observationRef))
+      throw new Error('Invalid observation reference');
+    const snapshotResponse = observationRef
+      ? await fetch(`${this.base()}/api/observations/${observationRef}`, {
+          signal: AbortSignal.timeout(3000),
+        })
+      : await fetch(`${this.base()}/api/snapshot`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ camera }),
+          signal: AbortSignal.timeout(6000),
+        });
+    if (!snapshotResponse.ok) throw new Error('当前相机无法捕获同步RGB-D图像');
+    const snapshot = (await snapshotResponse.json()) as Record<string, unknown>;
+    if (observationRef) snapshot.snapshot_ref = observationRef;
+    const response = await fetch(
+      `${this.base()}/api/observations/${String(snapshot.snapshot_ref)}/frame/${camera}`,
+      {
+        signal: AbortSignal.timeout(3000),
+      },
+    );
     if (!response.ok) throw new Error('当前相机尚未提供图像。');
     const bytes = Buffer.from(await response.arrayBuffer());
     if (
@@ -289,16 +324,22 @@ export class TaskEngine
       bytes.length > 20_000_000
     )
       throw new Error('相机图像格式不可用。');
-    const captured = Number(response.headers.get('x-frame-time'));
-    if (captured > 0 && Date.now() - captured * 1000 > 15000)
+    const captured = Number(snapshot.observed_at);
+    if (!observationRef && captured > 0 && Date.now() - captured * 1000 > 15000)
       throw new Error('相机画面已停止更新，请先恢复场景观察，再检查执行结果。');
     return {
       bytes,
       metadata: {
         camera,
         received_at: now(),
-        frame_sequence: response.headers.get('x-frame-sequence'),
-        observed_at: response.headers.get('x-frame-time'),
+        snapshot_ref: snapshot.snapshot_ref,
+        frame_sequence:
+          snapshot.frame_sequence ??
+          (Array.isArray(snapshot.views)
+            ? snapshot.views.map(record).find((v) => v.camera === `${camera}_camera`)
+                ?.sequence
+            : undefined),
+        observed_at: snapshot.observed_at,
       },
     };
   }
@@ -995,7 +1036,10 @@ export class TaskEngine
             recent_observations: (await this.store.read()).scene.observations ?? [],
           };
         },
-        readImage: (camera) => this.image(camera),
+        readImage: (camera, observationRef) => this.image(camera, observationRef),
+        observe: (params, signal) =>
+          observeScene(this.base(), params, goal.conversation_id, signal),
+        readObservation: (id, signal) => readObservation(this.base(), id, signal),
         record: async (data) => {
           await this.store.change((current, emit) => {
             const g = current.goals.find((g) => g.id === goal.id);

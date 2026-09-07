@@ -718,6 +718,66 @@ describe('model-driven observation', () => {
     expect(JSON.stringify(events)).not.toContain('anBlZy1kYXRh');
     expect(readImage).toHaveBeenCalledWith('wrist');
   });
+  it('grounds a box against the exact requested image and returns a real executable reference', async () => {
+    let round = 0;
+    const observe = vi.fn().mockResolvedValue({
+      ok: true,
+      command_id: 'vision_command',
+      vision: {
+        request_id: 'c'.repeat(32),
+        references: [{ ref: `obs:${'c'.repeat(32)}:scene_camera:0` }],
+      },
+    });
+    const events: Record<string, unknown>[] = [];
+    const call = vi.fn(async (_profile, messages: Message[]) => {
+      round++;
+      if (round === 1)
+        return answer('read_image', { camera: 'scene', purpose: 'select bin part' });
+      if (round === 2) {
+        const toolReply = messages.findLast((m) => m.role === 'tool');
+        const image = JSON.parse(String(toolReply!.content)) as { ref: string };
+        return answer('ground_region', {
+          image_ref: image.ref,
+          category: 'part',
+          box_normalized: [0.1, 0.2, 0.3, 0.4],
+        });
+      }
+      expect(JSON.stringify(messages)).toContain(
+        `obs:${'c'.repeat(32)}:scene_camera:0`,
+      );
+      return answer('submit_plan', decision());
+    });
+    await planning.planGoal(
+      profile,
+      'planner',
+      fakeGoal,
+      emptyQueue(),
+      {
+        images: true,
+        observe,
+        readImage: async () => ({
+          bytes: Buffer.from('jpeg'),
+          metadata: { camera: 'scene', snapshot_ref: 'b'.repeat(32) },
+        }),
+        readState: async () => ({}),
+        record: async (e) => {
+          events.push(e);
+        },
+      },
+      new AbortController().signal,
+      call,
+    );
+    expect(observe.mock.calls[0]![0]).toMatchObject({
+      selection: 'one',
+      grounding: {
+        camera: 'scene_camera',
+        snapshot_ref: 'b'.repeat(32),
+        box_normalized: [0.1, 0.2, 0.3, 0.4],
+      },
+    });
+    expect(events.some((e) => e.kind === 'vision_tool')).toBe(true);
+    expect(JSON.stringify(events)).not.toContain('data:image');
+  });
   it('lets a text planner request an image handled by its vision fallback', async () => {
     const call = vi
       .fn()
@@ -814,5 +874,43 @@ describe('model-driven observation', () => {
   it('preserves another goal when applying failure feedback', () => {
     const state = emptyQueue();
     expect(applyResult(state, 'missing', 'execution.failed', {})).toBeUndefined();
+  });
+  it('reviews uncertain post-action evidence without replaying the completed action', () => {
+    const state = emptyQueue();
+    state.goals.push({
+      id: 'g',
+      state: 'running',
+      recovery_count: 0,
+      steps: [
+        {
+          id: 's',
+          task_id: 't',
+          command_id: 'c',
+          skill: 'pick_place',
+          state: 'running',
+          title: '装入格位',
+          review_after: false,
+        },
+        {
+          id: 'next',
+          task_id: 't2',
+          command_id: 'c2',
+          skill: 'pick_place',
+          state: 'pending',
+        },
+      ],
+    } as unknown as Goal);
+    applyResult(state, 't', 'execution.completed', {
+      command_id: 'c',
+      result: {
+        ok: true,
+        review_required: true,
+        review_reason: '新图像未能确认格位',
+        evaluation: { physical_success: true },
+      },
+    });
+    expect(state.goals[0]!.state).toBe('review');
+    expect(state.goals[0]!.steps.map((s) => s.state)).toEqual(['completed', 'pending']);
+    expect(state.goals[0]!.review_reason).toBe('新图像未能确认格位');
   });
 });

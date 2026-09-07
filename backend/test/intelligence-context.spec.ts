@@ -2,12 +2,49 @@ import { describe, expect, it } from 'vitest';
 import {
   latestReferences,
   planningEvidence,
+  planningGoal,
   validateVisualReferences,
 } from '../src/apps/desktop-robot/intelligence/planning-context.js';
 import { decisionSchema } from '../src/apps/desktop-robot/intelligence/types.js';
+import type { Goal } from '../src/apps/desktop-robot/intelligence/types.js';
 const ref = (id: string, index = 0) => `obs:${id.repeat(32)}:scene_camera:${index}`;
 
 describe('planning observation context', () => {
+  it('does not replay dense candidate lists from every completed observation step', () => {
+    const candidates = Array.from({ length: 60 }, (_, i) => ({
+      ref: ref('a', i),
+      label: 'metal part',
+      box: [i, 2, i + 1, 4],
+      score: 0.9,
+    }));
+    const goal = {
+      source: 'pack upright',
+      completion: 'closed end up in target cell',
+      steps: Array.from({ length: 12 }, (_, id) => ({
+        id,
+        skill: 'perceive',
+        params: { category: 'metal part' },
+        state: 'completed',
+        result: {
+          result: {
+            ok: true,
+            evaluation: { physical_success: false },
+            vision: {
+              request_id: 'a'.repeat(32),
+              references: candidates,
+              views: [{ camera: 'scene_camera', candidates }],
+            },
+          },
+        },
+      })),
+    } as unknown as Goal;
+    const compact = JSON.stringify(planningGoal(goal));
+    expect(compact.length).toBeLessThan(JSON.stringify(goal).length / 10);
+    expect(compact).toContain('closed end up in target cell');
+    expect(compact).toContain('physical_success');
+    expect(compact).toContain('observation_ref');
+    expect(compact).not.toContain('candidates');
+  });
   it('drops old duplicate frames without merging different instances', () => {
     const rows = [
       { label: 'nut', camera: 'scene_camera', ref: ref('a') },
