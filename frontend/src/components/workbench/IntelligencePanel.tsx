@@ -195,7 +195,7 @@ export function IntelligencePanel({
         </DialogTitle>
         <DialogDescription>
           {page === "tasks"
-            ? "新任务依次排队，监督模型按实际结果调整剩余步骤。"
+            ? "这里只显示执行任务。问答和进度查询即时处理；机械臂空闲时直接执行，有动作占用时才等待。"
             : "规划与监督可分别选择模型。图片默认不进入上下文，仅在模型请求时读取。"}
         </DialogDescription>
         <div className="intelligence-panel">
@@ -229,12 +229,12 @@ export function IntelligencePanel({
                   还没有任务。通过文字或语音下达指令后，计划与执行进度会显示在这里。
                 </p>
               )}
-              {queue?.goals.map((goal) => (
+              {queue?.goals.slice().reverse().map((goal) => (
                 <article className="goal-card" key={goal.id}>
                   <div className="goal-heading">
                     <strong>{goal.source}</strong>
                     <span data-state={goal.state}>
-                      {states[goal.state] ?? goal.state}
+                      {queue.paused && goal.state === "queued" ? "等待恢复队列" : states[goal.state] ?? goal.state}
                     </span>
                   </div>
                   {goal.summary && <p>{goal.summary}</p>}

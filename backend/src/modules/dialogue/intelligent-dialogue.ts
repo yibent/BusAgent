@@ -13,6 +13,12 @@ import { ConversationHub } from '../conversation/conversation-hub.js';
 import { TtsAgent } from '../tts/tts-agent.js';
 import { Logger } from '../../common/logger.js';
 import {
+  immediateAction,
+  isAcknowledgement,
+  statusReply,
+} from '../../apps/desktop-robot/intelligence/interaction-routing.js';
+import { emptyQueue } from '../../apps/desktop-robot/intelligence/types.js';
+import {
   markExecutionLoop,
   trackBackground,
 } from '../../observability/execution-span.js';
@@ -76,6 +82,14 @@ export class IntelligentDialogue implements OnModuleDestroy {
       this.resolved.add(source);
       if (this.resolved.size > 2000)
         this.resolved.delete(this.resolved.values().next().value!);
+      // A newer question has replaced this read-only query; keep its result in
+      // memory without interrupting the answer to the newer user turn.
+      if (
+        p.interaction === true &&
+        this.latest.has(e.correlationId) &&
+        this.latest.get(e.correlationId) !== instruction
+      )
+        return;
     }
     const current = this.pending.get(e.correlationId);
     // New user speech preempts output. A late result for an older task must not
@@ -84,6 +98,16 @@ export class IntelligentDialogue implements OnModuleDestroy {
       current?.controller.abort();
       this.hub.publish(e.correlationId, { type: 'speech.interrupted' });
       this.tts.cancel(e.correlationId);
+    }
+    if (
+      phase === 'acknowledgement' &&
+      typeof p.text === 'string' &&
+      (isAcknowledgement(p.text) ||
+        immediateAction(p.text) ||
+        statusReply(emptyQueue(), p.text, e.correlationId))
+    ) {
+      this.pending.delete(e.correlationId);
+      return;
     }
     const controller = new AbortController();
     const job = { controller, instruction, phase };
@@ -101,15 +125,20 @@ export class IntelligentDialogue implements OnModuleDestroy {
     const e = context.event,
       p = e.payload as Record<string, unknown>;
     const isAck = job.phase === 'acknowledgement';
+    const verbatim = !isAck && p.verbatim === true && typeof p.text === 'string';
     const valid = () =>
       !job.controller.signal.aborted &&
+      (p.interaction !== true ||
+        !this.latest.has(e.correlationId) ||
+        this.latest.get(e.correlationId) === job.instruction) &&
       (!isAck ||
         (this.latest.get(e.correlationId) === job.instruction &&
           !this.resolved.has(`${e.correlationId}:${job.instruction}`)));
     const started = Date.now();
     let shared: unknown;
     try {
-      shared = await this.memory.view(e.correlationId, isAck ? 2400 : 4200);
+      if (!verbatim)
+        shared = await this.memory.view(e.correlationId, isAck ? 2400 : 4200);
     } catch (error) {
       shared = { unavailable: true };
       this.logger.warn(`context unavailable: ${String(error)}`);
@@ -134,7 +163,7 @@ export class IntelligentDialogue implements OnModuleDestroy {
         }),
       },
     ];
-    let text = '';
+    let text = verbatim ? (p.text as string) : '';
     const deadline = AbortSignal.any([
       job.controller.signal,
       AbortSignal.timeout(isAck ? 3500 : 6500),
@@ -143,19 +172,23 @@ export class IntelligentDialogue implements OnModuleDestroy {
     let responseModel = '';
     let channelSwitchedTo = '';
     try {
-      attempt = await this.models.dialogueAttempt();
-      markExecutionLoop('slow', attempt.profile.model);
-      const answer = await complete(
-        { ...attempt.profile, thinking: false, timeoutMs: isAck ? 2200 : 4500 },
-        messages,
-        [],
-        deadline,
-        { maxTokens: isAck ? 48 : 600 },
-      );
-      text =
-        typeof answer.message.content === 'string' ? answer.message.content.trim() : '';
-      if (!text) throw new Error('对话模型返回空文本。');
-      responseModel = attempt.profile.model;
+      if (!verbatim) {
+        attempt = await this.models.dialogueAttempt();
+        markExecutionLoop('slow', attempt.profile.model);
+        const answer = await complete(
+          { ...attempt.profile, thinking: false, timeoutMs: isAck ? 2200 : 4500 },
+          messages,
+          [],
+          deadline,
+          { maxTokens: isAck ? 48 : 600 },
+        );
+        text =
+          typeof answer.message.content === 'string'
+            ? answer.message.content.trim()
+            : '';
+        if (!text) throw new Error('对话模型返回空文本。');
+        responseModel = attempt.profile.model;
+      }
     } catch (error) {
       if (!job.controller.signal.aborted)
         this.logger.warn(`dialogue request failed: ${String(error)}`);
@@ -217,6 +250,7 @@ export class IntelligentDialogue implements OnModuleDestroy {
         model: responseModel || null,
         profile: attempt?.profile.id ?? null,
         model_failed: Boolean(attempt && !responseModel),
+        ...(verbatim ? { evidence_delivery: true } : {}),
         ...(channelSwitchedTo ? { channel_switched_to: channelSwitchedTo } : {}),
       },
     });

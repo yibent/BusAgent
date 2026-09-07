@@ -36,6 +36,31 @@ test('loop colors are driven by event metadata', () => {
   const clips = buildTimeline([event('a', 'perception.reported', 1000, { payload: { loop: 'fast' } }), event('b', 'perception.reported', 2000, { payload: { loop: 'slow' } })]);
   assert.deepEqual(clips.map(c => c.loop), ['fast', 'slow']);
 });
+test('physical execution and vision remain visible inside planning spans', () => {
+  const clips = buildTimeline([
+    node('n', 'started', 1000, 'parent', 'robot.planning'),
+    event('start', 'execution.started', 1200, { sourceSpanId: 'parent', taskId: 'act' }),
+    event('vision', 'intelligence.observed', 1300, { sourceAgentId: 'robot.intelligence', sourceSpanId: 'parent', payload: { kind: 'vision_tool', loop: 'fast' } }),
+    event('end', 'execution.completed', 5000, { sourceSpanId: 'parent', taskId: 'act' }),
+  ]);
+  assert.equal(clips.find(c => c.id === 'parent').track, 'information');
+  assert.equal(clips.find(c => c.id === 'start').track, 'motion');
+  assert.equal(clips.find(c => c.id === 'start').end, 5000);
+  assert.equal(clips.find(c => c.id === 'vision').track, 'vision');
+});
+test('nominal vision operations display recorded duration and actual loop, without duplicate result cards', () => {
+  const clips = buildTimeline([
+    event('a', 'intelligence.observed', 1100, { payload: { kind: 'operation_started', operation_id: 'v', operation: 'perception', started_at_ms: 1000 } }),
+    event('b', 'intelligence.observed', 1400, { payload: { kind: 'operation_completed', operation_id: 'v', operation: 'perception', started_at_ms: 1000, finished_at_ms: 1320, loop: 'fast', command_id: 'vision1' } }),
+    event('c', 'intelligence.observed', 1500, { payload: { kind: 'vision_tool', command_id: 'vision1' } }),
+  ]);
+  assert.equal(clips.length, 1); assert.equal(clips[0].track, 'vision');
+  assert.equal(clips[0].start, 1000); assert.equal(clips[0].end, 1320); assert.equal(clips[0].loop, 'fast');
+});
+test('perceive commands use the vision track, rather than appearing as arm movement', () => {
+  const [clip] = buildTimeline([event('a', 'execution.started', 1000, { payload: { skill: 'perceive' } })]);
+  assert.equal(clip.track, 'vision');
+});
 test('connection loss closes an unfinished recording as unknown, never success', () => {
   const clips = buildTimeline([event('a', 'execution.started', 1000), event('lost', 'connection.lost', 8000)]);
   assert.equal(clips[0].end, 8000); assert.equal(clips[0].state, 'unknown');

@@ -2,6 +2,10 @@ import {
   semanticEvidence,
   type QueueState,
 } from '../../apps/desktop-robot/intelligence/types.js';
+import {
+  contextualGoals,
+  relevantGoals,
+} from '../../apps/desktop-robot/intelligence/interaction-routing.js';
 const object = (x: unknown): Record<string, unknown> =>
   x && typeof x === 'object' && !Array.isArray(x) ? (x as Record<string, unknown>) : {};
 const pick = (x: Record<string, unknown>, keys: string[]) =>
@@ -64,8 +68,10 @@ export function memoryEntry(raw: unknown): Record<string, unknown> {
   };
 }
 
-export function taskMemory(state: QueueState) {
-  const goals = state.goals.filter((g) => g.steps.length || g.state !== 'completed');
+export function taskMemory(state: QueueState, conversation?: string) {
+  const goals = conversation
+    ? contextualGoals(state, conversation)
+    : relevantGoals(state);
   const brief = (g: (typeof goals)[number]) => ({
     ref: g.id,
     instruction_id: g.input_event_id,
@@ -92,8 +98,8 @@ export function taskMemory(state: QueueState) {
     updated_at: g.updated_at,
   });
   return {
-    total_task_count: state.goals.length,
-    counts_by_state: state.goals.reduce<Record<string, number>>((counts, goal) => {
+    total_task_count: goals.length,
+    counts_by_state: goals.reduce<Record<string, number>>((counts, goal) => {
       counts[goal.state] = (counts[goal.state] ?? 0) + 1;
       return counts;
     }, {}),
@@ -101,19 +107,10 @@ export function taskMemory(state: QueueState) {
     holding: semanticEvidence(state.scene.holding),
     active: goals
       .filter((g) => !['completed', 'cancelled'].includes(g.state))
-      .sort(
-        (a, b) =>
-          ['running', 'planning', 'review', 'queued', 'paused', 'blocked'].indexOf(
-            a.state,
-          ) -
-          ['running', 'planning', 'review', 'queued', 'paused', 'blocked'].indexOf(
-            b.state,
-          ),
-      )
       .map(brief),
     recent_robot_tasks: goals
       .filter((g) => ['completed', 'cancelled'].includes(g.state))
-      .slice(-8)
+      .slice(0, 8)
       .map(brief),
   };
 }

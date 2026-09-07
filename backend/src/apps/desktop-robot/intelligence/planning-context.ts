@@ -136,6 +136,7 @@ export function planningGoal(goal: Goal): unknown {
             'review_reason',
             'command_id',
             'elapsed_s',
+            'physical_attempted',
           ]),
           result_message: text(result.message).slice(0, 400),
           observation_ref: object(result.vision).request_id,

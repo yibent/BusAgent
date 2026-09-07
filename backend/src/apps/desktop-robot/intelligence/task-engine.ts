@@ -1,4 +1,12 @@
 import { canPrepareAhead, independentAhead } from './lookahead.js';
+import {
+  executionGoals,
+  immediateAction,
+  isAcknowledgement,
+  isSceneQuestion,
+  statusReply,
+  waitingMessage,
+} from './interaction-routing.js';
 import { recoveryObservation, resolveRecovery } from './local-recovery.js';
 import {
   compactContext,
@@ -26,6 +34,10 @@ import { ModelConfig } from './model-config.js';
 import { planGoal } from './planning.js';
 import { ContextCompression } from '../../../modules/conversation/context-compression.js';
 import { observeScene, readObservation } from './observation-tools.js';
+import { groundPrimitive, needsPrimitiveGrounding } from './primitive-grounding.js';
+import { observeOperation } from './operation-telemetry.js';
+import { selectImageObject } from './visual-grounding.js';
+import { trackBackground } from '../../../observability/execution-span.js';
 import {
   ended,
   inFlight,
@@ -49,7 +61,9 @@ interface ReplyTo {
 const record = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
 const activeGoal = (state: QueueState) =>
-  state.goals.find((g) => !ended(g) && !['blocked', 'paused'].includes(g.state));
+  executionGoals(state).find(
+    (g) => !ended(g) && !['blocked', 'paused'].includes(g.state),
+  );
 const stepsFor = (actions: Action[]): QueueStep[] =>
   actions.map((action) => {
     const id = randomUUID();
@@ -235,6 +249,7 @@ export class TaskEngine
   private ticking = false;
   private job: { id: string; abort: AbortController } | undefined;
   private intakeJobs = new Map<string, AbortController>();
+  private preparationJobs = new Map<string, AbortController>();
   private inferenceJobs = new Set<string>();
   private ahead:
     | {
@@ -272,6 +287,7 @@ export class TaskEngine
     if (this.timer) clearInterval(this.timer);
     this.job?.abort.abort();
     for (const abort of this.intakeJobs.values()) abort.abort();
+    for (const abort of this.preparationJobs.values()) abort.abort();
     this.ahead?.abort.abort();
   }
   private base() {
@@ -387,7 +403,8 @@ export class TaskEngine
     };
   }
   async snapshot() {
-    return { enabled: intelligenceEnabled(), ...(await this.store.read()) };
+    const state = await this.store.read();
+    return { enabled: intelligenceEnabled(), ...state, goals: executionGoals(state) };
   }
   private emit(
     emit: (e: QueuedEvent) => void,
@@ -406,7 +423,12 @@ export class TaskEngine
     };
     emit({ key, event });
   }
-  private reply(emit: (e: QueuedEvent) => void, goal: Goal, message: string) {
+  private reply(
+    emit: (e: QueuedEvent) => void,
+    goal: Goal,
+    message: string,
+    verbatim = !goal.interaction,
+  ) {
     this.emit(
       emit,
       `reply:${goal.id}:${randomUUID()}`,
@@ -418,6 +440,8 @@ export class TaskEngine
         instruction_id: goal.input_event_id,
         user_text: goal.source,
         goal_state: goal.state,
+        interaction: goal.interaction === true,
+        verbatim,
       },
     );
   }
@@ -464,6 +488,24 @@ export class TaskEngine
         instruction: event.eventId,
         text,
       };
+      if (isAcknowledgement(text)) {
+        await this.store.change((_, emit) =>
+          this.emit(
+            emit,
+            `ack:${event.eventId}`,
+            'intelligence.reply',
+            event.correlationId,
+            {
+              text: '我在。',
+              instruction_id: event.eventId,
+              user_text: text,
+              interaction: true,
+              verbatim: true,
+            },
+          ),
+        );
+        return;
+      }
       if (/^(暂停|停止|停下|停|stop|pause)[。！!\s]*$/i.test(text)) {
         await this.control('pause', undefined, true, '', undefined, replyTo);
         return;
@@ -476,20 +518,23 @@ export class TaskEngine
         await this.control('cancel', undefined, true, '', undefined, replyTo);
         return;
       }
-      if (/^(状态|进度|现在在做什么|做到哪了|还剩什么)[？?。\s]*$/.test(text)) {
+      const status = statusReply(await this.store.read(), text, event.correlationId);
+      if (status) {
         await this.store.change((state, emit) => {
-          const active = activeGoal(state);
+          const current = statusReply(state, text, event.correlationId)!;
           this.emit(
             emit,
             `status:${event.eventId}`,
             'intelligence.reply',
             event.correlationId,
             {
-              text: active
-                ? `${active.summary || active.source}：${active.state}，已完成 ${active.steps.filter((s) => s.state === 'completed').length}/${active.steps.length} 步。${active.message}`
-                : '当前没有正在执行的任务。',
+              text: current.text,
               instruction_id: event.eventId,
               user_text: text,
+              verbatim: true,
+              queue_paused: state.paused,
+              target_goal_id: current.goal?.id,
+              target_goal_state: current.goal?.state,
             },
           );
         });
@@ -560,6 +605,9 @@ export class TaskEngine
     requestorId?: string,
     replyTo?: ReplyTo,
   ): Promise<QueueState> {
+    if (['pause', 'cancel', 'amend'].includes(action))
+      for (const [goalId, abort] of this.preparationJobs)
+        if (!id || id === goalId) abort.abort();
     if (id && id !== requestorId && ['pause', 'cancel', 'amend'].includes(action))
       this.intakeJobs.get(id)?.abort();
     this.ahead?.abort.abort();
@@ -574,13 +622,17 @@ export class TaskEngine
     await this.store.change((state, emit) => {
       const goal = id
         ? state.goals.find((g) => g.id === id)
-        : ((['resume', 'retry'].includes(action)
-            ? state.goals.find((g) => ['paused', 'blocked'].includes(g.state))
-            : undefined) ?? activeGoal(state));
+        : action === 'resume'
+          ? (state.goals.find((g) => g.id === state.paused_goal_id && !ended(g)) ??
+            activeGoal(state))
+          : action === 'retry'
+            ? state.goals.findLast((g) => ['paused', 'blocked'].includes(g.state))
+            : activeGoal(state);
       if (id && !goal) throw new Error('任务不存在。');
       if (action === 'pause') {
         state.paused = true;
         if (goal && !ended(goal)) {
+          state.paused_goal_id = goal.id;
           goal.state = 'paused';
           goal.revision++;
         }
@@ -591,8 +643,11 @@ export class TaskEngine
         }
       } else if (action === 'resume' || action === 'retry') {
         state.paused = false;
+        delete state.paused_goal_id;
         if (goal && !ended(goal)) {
-          goal.state = goal.steps.length ? 'review' : 'queued';
+          goal.state = goal.steps.some((s) => s.state !== 'pending')
+            ? 'review'
+            : 'queued';
           goal.recovery_count = 0;
           goal.revision++;
           goal.review_reason = '用户恢复任务，先核对当前持物与已完成步骤。';
@@ -790,6 +845,16 @@ export class TaskEngine
           )
         )
           return;
+        if (needsPrimitiveGrounding(step)) {
+          if (!this.preparationJobs.has(goal.id)) {
+            const abort = new AbortController();
+            this.preparationJobs.set(goal.id, abort);
+            void trackBackground(() => this.preparePrimitive(goal, step, abort.signal))
+              .catch((error) => this.logger.warn(String(error)))
+              .finally(() => this.preparationJobs.delete(goal.id));
+          }
+          return;
+        }
         await this.store.change((current, emit) => {
           const g = current.goals.find((g) => g.id === goal.id);
           const s = g?.steps.find((s) => s.id === step.id);
@@ -836,6 +901,118 @@ export class TaskEngine
       this.ticking = false;
     }
   }
+  private async preparePrimitive(
+    goal: Goal,
+    step: QueueStep,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    const recordEvent = async (data: Record<string, unknown>) => {
+      await this.store.change((state, emit) => {
+        const current = state.goals.find((g) => g.id === goal.id);
+        if (current && data.kind === 'model') current.model_calls++;
+        this.emit(
+          emit,
+          `grounding:${randomUUID()}`,
+          'intelligence.observed',
+          goal.conversation_id,
+          { goal_id: goal.id, step_id: step.id, ...data },
+        );
+      });
+    };
+    try {
+      const observe = (params: Record<string, unknown>) =>
+        observeOperation(
+          recordEvent,
+          typeof params.inspect === 'string' ? params.inspect : 'perception',
+          () =>
+            observeScene(
+              this.base(),
+              params,
+              goal.conversation_id,
+              AbortSignal.any([signal, AbortSignal.timeout(15000)]),
+            ),
+        );
+      const remembered = record((await this.live()).world).objects;
+      const action = await groundPrimitive(
+        step,
+        observe,
+        (label, field) =>
+          observeOperation(recordEvent, 'visual_fallback', async () => {
+            const settings = await this.models.settings();
+            if (!settings.images)
+              throw new Error(`当前视觉未找到 ${label}，图像语义回退已关闭。`);
+            const profiles = this.models.profilesFor
+              ? await this.models.profilesFor('planner')
+              : [await this.models.profile('planner')];
+            signal.throwIfAborted();
+            const frame = await this.image('scene');
+            const selection = await selectImageObject(
+              profiles,
+              frame.bytes,
+              `当前用户要求：${goal.source}。只框出${field === 'target' ? '一个待抓取物体' : '一个用于放置的容器本身'}，视觉类别提示是 ${label}；不要执行任务。`,
+              signal,
+              recordEvent,
+            );
+            return observe({
+              category: label,
+              selection: 'one',
+              grounding: {
+                snapshot_ref: frame.metadata.snapshot_ref,
+                camera: 'scene_camera',
+                box_normalized: selection.box_normalized,
+              },
+            });
+          }),
+        Array.isArray(remembered) ? remembered : [],
+      );
+      signal.throwIfAborted();
+      let applied = false;
+      await this.store.change((state) => {
+        const g = state.goals.find((g) => g.id === goal.id);
+        const s = g?.steps.find((s) => s.id === step.id);
+        if (
+          state.paused ||
+          !g ||
+          g.state !== 'running' ||
+          g.revision !== goal.revision ||
+          s?.state !== 'pending'
+        )
+          return;
+        s.params = action.params;
+        applied = true;
+      });
+      return applied;
+    } catch (error) {
+      if (signal.aborted) return false;
+      await this.store.change((state, emit) => {
+        const g = state.goals.find((g) => g.id === goal.id);
+        const s = g?.steps.find((s) => s.id === step.id);
+        if (
+          state.paused ||
+          !g ||
+          g.state !== 'running' ||
+          g.revision !== goal.revision ||
+          s?.state !== 'pending'
+        )
+          return;
+        s.state = 'failed';
+        s.finished_at = now();
+        s.result = {
+          ok: false,
+          message: (error as Error).message,
+          physical_attempted: false,
+          failure: { code: 'GROUNDING_UNRESOLVED', scope: 'pre_dispatch' },
+        };
+        g.state = 'review';
+        g.review_kind = 'failure';
+        g.review_reason = `执行前视觉选择未完成，机械臂尚未动作：${(error as Error).message}`;
+        g.message = g.review_reason;
+        this.reply(emit, g, g.message);
+      });
+      return false;
+    }
+  }
+
   private async reconcile(step: QueueStep) {
     const response = await fetch(
       `${this.base()}/api/commands/${encodeURIComponent(step.command_id)}`,
@@ -1174,9 +1351,18 @@ export class TaskEngine
         return;
       delete g.inference_request;
       g.state = 'blocked';
-      g.message = error.message;
+      g.message = /timeout|timed out|aborted due/i.test(error.message)
+        ? '模型服务响应超时，本次请求未完成。'
+        : error.message;
       g.updated_at = now();
-      this.reply(emit, g, `${g.message} 任务和已完成步骤已保留。`);
+      this.reply(
+        emit,
+        g,
+        g.interaction
+          ? `${g.message}这不代表任何动作已执行；可直接查询当前任务进度。`
+          : `${g.message}任务和已完成步骤已保留。`,
+        true,
+      );
     });
   }
 
@@ -1263,6 +1449,49 @@ export class TaskEngine
         g.state = 'planning';
     });
     signal.throwIfAborted();
+    const direct =
+      role === 'planner' && !goal.steps.length
+        ? immediateAction(goal.source)
+        : undefined;
+    if (direct) {
+      const live = await this.live();
+      const capabilities = record(live.capabilities);
+      if (
+        Array.isArray(capabilities.skills) &&
+        capabilities.skills.includes(direct.skill)
+      ) {
+        const errors = validatePlan(executablePlan(goal, stepsFor([direct])[0]!));
+        if (!errors.length) {
+          await this.store.change((_, emit) =>
+            this.emit(
+              emit,
+              `direct:${goal.id}`,
+              'intelligence.observed',
+              goal.conversation_id,
+              {
+                kind: 'direct_plan',
+                role,
+                loop: 'fast',
+                goal_id: goal.id,
+                skill: direct.skill,
+              },
+            ),
+          );
+          return {
+            decision: {
+              mode: 'simple' as const,
+              summary: direct.title,
+              completion: '控制器确认动作完成',
+              outcome: 'continue' as const,
+              message: '',
+              actions: [direct],
+              plan_scope: 'complete' as const,
+            },
+            capabilities,
+          };
+        }
+      }
+    }
     const profiles = this.models.profilesFor
       ? await this.models.profilesFor(role)
       : [await this.models.profile(role)];
@@ -1277,6 +1506,8 @@ export class TaskEngine
       goal,
       state,
       {
+        routeRequests: true,
+        readQueue: () => this.store.read(),
         images: settings.images,
         createWindow: this.compression
           ? (...args) => this.compression!.createWindow(...args)
@@ -1412,7 +1643,11 @@ export class TaskEngine
               `model:${randomUUID()}`,
               'intelligence.observed',
               g.conversation_id,
-              { goal_id: g.id, loop: data.kind === 'model' ? 'slow' : 'fast', ...data },
+              {
+                goal_id: g.id,
+                loop: data.kind === 'model' ? 'slow' : undefined,
+                ...data,
+              },
             );
           });
         },
@@ -1462,7 +1697,12 @@ export class TaskEngine
       if (decision.outcome === 'chat') {
         if (role === 'supervisor') throw new Error('监督节点不能用闲聊结束执行任务。');
         goal.state = 'completed';
-        this.reply(emit, goal, decision.message || decision.summary);
+        this.reply(
+          emit,
+          goal,
+          decision.message || decision.summary,
+          decision.evidence_reply === true || isSceneQuestion(goal.source),
+        );
         return;
       }
       if (decision.outcome === 'blocked' || decision.outcome === 'clarify') {
@@ -1508,7 +1748,7 @@ export class TaskEngine
           step.state = 'superseded';
       goal.steps.push(...stepsFor(decision.actions));
       goal.state = role === 'planner' ? 'queued' : 'running';
-      goal.message = `接下来：${decision.actions.map((a) => a.title).join('；')}。`;
+      goal.message = waitingMessage(state, goal);
       this.reply(emit, goal, goal.message);
     });
   }

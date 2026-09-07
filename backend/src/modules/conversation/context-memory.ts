@@ -59,7 +59,7 @@ export class ContextMemory {
       ),
     ]);
     const state = queue[0][0] ? (decode(queue[0][0].payload) as QueueState) : undefined;
-    const working = state ? taskMemory(state) : {};
+    const working = state ? taskMemory(state, conversation) : {};
     const view = this.compression
       ? await this.compression.conversation(
           conversation,

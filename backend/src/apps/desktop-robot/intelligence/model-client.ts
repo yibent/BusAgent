@@ -55,7 +55,7 @@ export async function complete(
       stream: false,
       max_tokens: options.maxTokens ?? 6000,
       ...(tools.length
-        ? { tools, tool_choice: 'auto', parallel_tool_calls: false }
+        ? { tools, tool_choice: 'auto', parallel_tool_calls: true }
         : {}),
       ...(profile.provider === 'deepseek'
         ? { thinking: { type: profile.thinking ? 'enabled' : 'disabled' } }

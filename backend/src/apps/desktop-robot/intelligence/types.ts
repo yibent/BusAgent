@@ -39,6 +39,7 @@ export const decisionSchema = z.object({
     .default('continue'),
   message: z.string().default(''),
   plan_scope: z.enum(['complete', 'stage']).optional(),
+  evidence_reply: z.boolean().optional(),
 });
 export type Decision = z.infer<typeof decisionSchema>;
 export const reviewSchema = z.object({
@@ -115,6 +116,7 @@ export interface SceneState {
 export interface QueueState {
   revision: number;
   paused: boolean;
+  paused_goal_id?: string;
   goals: Goal[];
   scene: SceneState;
   receipts: string[];

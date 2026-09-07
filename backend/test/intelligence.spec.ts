@@ -175,6 +175,134 @@ describe('durable goal execution', () => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
   });
+  it('never turns a voice filler or progress followup into another goal', async () => {
+    await engine.handle(context('filler', 'intent.created', { text: '嗯。' }));
+    await engine.handle(
+      context('status', 'intent.created', { text: '还没有得到结果吗？' }),
+    );
+    await tick();
+    expect(store.state.goals).toEqual([]);
+    expect(planning.planGoal).not.toHaveBeenCalled();
+    expect(
+      publish.mock.calls.some(
+        ([, event]) => event.event_type === 'robot.execute.requested',
+      ),
+    ).toBe(false);
+  });
+  it('keeps the scheduler and status replies available while visual preparation is waiting', async () => {
+    let finish!: (value: boolean) => void;
+    const preparation = vi
+      .spyOn(
+        engine as unknown as { preparePrimitive(...args: unknown[]): Promise<boolean> },
+        'preparePrimitive',
+      )
+      .mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+    store.state.goals = [
+      {
+        id: 'preparing',
+        conversation_id: 'conversation',
+        input_event_id: 'source',
+        source: '任选一个零件装箱',
+        state: 'running',
+        interaction: false,
+        mode: 'simple',
+        summary: '装箱',
+        completion: '放稳',
+        message: '',
+        review_reason: '',
+        recovery_count: 0,
+        created_at: '2026-09-08',
+        updated_at: '2026-09-08',
+        model_calls: 1,
+        revision: 1,
+        steps: [
+          {
+            title: '装箱',
+            skill: 'pick_place',
+            params: { target: { label: 'part', selection: 'any' } },
+            review_after: false,
+            id: 'part-step',
+            task_id: 'part-task',
+            command_id: 'part-command',
+            state: 'pending',
+            attempt: 1,
+          },
+        ],
+      },
+    ];
+    await tick();
+    expect(preparation).toHaveBeenCalledTimes(1);
+    await engine.handle(
+      context('query', 'intent.created', { text: '还没有得到结果吗？' }),
+    );
+    await tick();
+    expect(preparation).toHaveBeenCalledTimes(1);
+    expect(store.state.goals).toHaveLength(1);
+    expect(
+      publish.mock.calls.some(([, e]) => e.event_type === 'intelligence.reply'),
+    ).toBe(true);
+    finish(false);
+    await drain();
+  });
+  it('plans a spoken reset without an LLM, reports pause, and answers progress without creating another task', async () => {
+    store.state.paused = true;
+    vi.spyOn(engine, 'live').mockResolvedValue({
+      phase: 'hold',
+      capabilities: { skills: ['home'] },
+    });
+    await engine.handle(
+      context('home', 'intent.created', { text: '嗯，那你。先把机械臂复位吧。' }),
+    );
+    await tick();
+    await drain();
+    await tick();
+    expect(planning.planGoal).not.toHaveBeenCalled();
+    expect(store.state.goals[0]?.steps[0]?.skill).toBe('home');
+    expect(store.state.goals[0]?.message).toContain('尚未开始');
+    expect(store.state.goals[0]?.message).toContain('暂停');
+    expect(
+      publish.mock.calls.some(
+        ([, event]) => (event as { event_type: string }).event_type === 'plan.proposed',
+      ),
+    ).toBe(false);
+    await engine.handle(
+      context('status', 'intent.created', { text: '机械臂复位任务执行的怎么样了？' }),
+    );
+    const reply = store.events.findLast(
+      (e) => e.event.event_type === 'intelligence.reply',
+    )?.event.payload;
+    expect(reply).toMatchObject({
+      verbatim: true,
+      queue_paused: true,
+      target_goal_id: 'goal_home',
+    });
+    expect(JSON.stringify(reply)).toContain('尚未开始');
+    expect(store.state.goals).toHaveLength(1);
+    expect(store.state.paused).toBe(true);
+    store.state.goals.push({
+      ...store.state.goals[0]!,
+      id: 'old-blocked-test',
+      state: 'blocked',
+      steps: [],
+    });
+    await engine.control('resume', undefined, false);
+    await tick();
+    await drain();
+    await tick();
+    expect(store.state.goals[0]?.steps[0]?.state).toBe('dispatching');
+    expect(planning.planGoal).not.toHaveBeenCalled();
+    expect(store.state.goals[1]?.state).toBe('blocked');
+  });
+  it('keeps completed and failed questions out of the execution list', async () => {
+    await engine.handle(context('question', 'intent.created', { text: '你是谁' }));
+    expect((await engine.snapshot()).goals).toHaveLength(0);
+    expect(store.state.goals).toHaveLength(1);
+  });
   it('prepares an independent queued task during motion and uses it only after measured success', async () => {
     const models = (engine as unknown as { models: ModelConfig }).models;
     vi.spyOn(models, 'settings').mockResolvedValue({

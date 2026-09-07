@@ -64,14 +64,54 @@ function fixture() {
         payload,
       }),
       agentConfig: { config: {} },
-      publish: async (input: Record<string, unknown>) => {
+      publish: (input: Record<string, unknown>) => {
         bus.push(input);
+        return Promise.resolve();
       },
     }) as unknown as InProcessEventContext;
   return { agent, messages, bus, context, tts, models };
 }
 afterEach(() => vi.restoreAllMocks());
 describe('parallel intelligent dialogue', () => {
+  it('delivers measured status unchanged without model rewriting or channel failures', async () => {
+    const f = fixture();
+    const call = vi
+      .spyOn(client, 'complete')
+      .mockResolvedValue(answer('机械臂已完成复位。'));
+    f.agent.handle(
+      f.context('status', 'intent.created', { text: '机械臂复位任务执行的怎么样了？' }),
+    );
+    f.agent.handle(
+      f.context('result', 'intelligence.reply', {
+        instruction_id: 'status',
+        verbatim: true,
+        text: '机械臂复位尚未开始，执行队列已暂停。',
+      }),
+    );
+    await drain();
+    expect(call).not.toHaveBeenCalled();
+    expect(f.models.recordDialogueResult).not.toHaveBeenCalled();
+    expect(f.messages.find((m) => m.type === 'reply.final')?.text).toBe(
+      '机械臂复位尚未开始，执行队列已暂停。',
+    );
+    f.agent.onModuleDestroy();
+  });
+  it('does not interrupt a newer turn with an older read-only answer', async () => {
+    const f = fixture();
+    const call = vi.spyOn(client, 'complete').mockResolvedValue(answer('我看看。'));
+    f.agent.handle(f.context('new', 'intent.created', { text: '机械臂复位吧' }));
+    f.agent.handle(
+      f.context('old-result', 'intelligence.reply', {
+        instruction_id: 'old',
+        interaction: true,
+        text: '先前的画面描述',
+      }),
+    );
+    await drain();
+    expect(call).not.toHaveBeenCalled();
+    expect(f.messages.filter((m) => m.type === 'reply.final')).toHaveLength(0);
+    f.agent.onModuleDestroy();
+  });
   it('receives context, acknowledges once per utterance and speaks the planner result', async () => {
     const f = fixture();
     const call = vi

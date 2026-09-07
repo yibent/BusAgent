@@ -48,6 +48,10 @@ export function agentTitle(agent: string) {
     instruction: "指令理解",
     grounding: "目标解析",
     planner: "任务规划",
+    planning: "任务规划",
+    supervision: "任务监督",
+    memory: "会话记忆",
+    context_compression: "上下文压缩",
     validator: "计划检查",
     "plan-validator": "计划检查",
     "loop-router": "环路选择",
@@ -80,7 +84,7 @@ export function clipTrack(agent: string, eventType = ""): Track {
   )
     return "motion";
   if (
-    /instruction|grounding|planner|dialogue|llm|reply|intent|conversation/.test(
+    /instruction|grounding|plann|intelligence|supervis|memory|compression|dialogue|llm|reply|intent|conversation/.test(
       `${agent} ${eventType}`,
     )
   )
@@ -143,12 +147,57 @@ export function buildTimeline(input: RobotBusEvent[]): TimelineClip[] {
     }
   }
   const activeExecution = new Map<string, TimelineClip>();
+  const operations = new Map<string, TimelineClip>();
+  const visionCommands = new Map<string, TimelineClip>();
+  const frames = new Map<string, TimelineClip>();
   for (const event of events) {
     if (event.eventType.startsWith("node.")) continue;
+    const p = event.payload;
     const owner = event.sourceSpanId
       ? spans.get(event.sourceSpanId)
       : undefined;
-    if (owner) {
+    if (p.operation_id && /^operation_(started|completed|failed)$/.test(String(p.kind))) {
+      const id = String(p.operation_id);
+      let clip = operations.get(id);
+      if (!clip) {
+        clip = { id, title: ({ camera_frame: "相机取帧", perception: "视觉定位", grid: "格位几何", axis: "朝向几何", visual_fallback: "视觉语义回退" } as Record<string, string>)[String(p.operation)] ?? "视觉处理",
+          agent: event.sourceAgentId, track: "vision", loop: "neutral",
+          start: Number(p.started_at_ms ?? event.createdAt), state: "running",
+          taskId: event.taskId, parentId: owner?.id, triggerId: event.causationId,
+          lane: 0, events: [], precise: true };
+        operations.set(id, clip); clips.push(clip);
+      }
+      clip.events.push(event);
+      if (p.kind !== "operation_started") {
+        clip.end = Number(p.finished_at_ms ?? event.createdAt);
+        clip.state = p.kind === "operation_failed" || p.ok === false ? "failed" : "completed";
+        if (p.command_id) visionCommands.set(String(p.command_id), clip);
+        if (p.operation === 'camera_frame' && p.request_id) frames.set(String(p.request_id), clip);
+      }
+      continue;
+    }
+    if (p.kind === 'image' && frames.has(String(p.snapshot_ref))) {
+      frames.get(String(p.snapshot_ref))!.events.push(event);
+      continue;
+    }
+    if (p.kind === "vision_tool" && visionCommands.has(String(p.command_id))) {
+      visionCommands.get(String(p.command_id))!.events.push(event);
+      continue;
+    }
+    // A planning span can launch physical work or perception. Keep the actual
+    // operation on its own track instead of absorbing it into the parent card.
+    const operationEvent = /^execution\.(started|progress|completed|failed|cancelled|unknown)$/.test(event.eventType);
+    const visionEvent = /^(perception\.|observation\.)/.test(event.eventType) || p.kind === "vision_tool" || p.kind === "image";
+    if (owner && operationEvent && owner.track === "motion" && p.skill === "perceive") {
+      owner.track = "vision";
+      owner.title = "视觉处理";
+    }
+    if (owner && operationEvent && owner.track === (p.skill === "perceive" ? "vision" : "motion")) {
+      owner.events.push(event);
+      owner.loop = loopOf(owner.events);
+      continue;
+    }
+    if (owner && !operationEvent && !visionEvent) {
       owner.events.push(event);
       owner.loop = loopOf(owner.events);
       continue;
@@ -161,12 +210,13 @@ export function buildTimeline(input: RobotBusEvent[]): TimelineClip[] {
         id: event.id,
         title: String(event.payload.skill ?? "Panda 执行"),
         agent: event.sourceAgentId,
-        track: "motion",
+        track: event.payload.skill === "perceive" ? "vision" : "motion",
         loop: loopOf([event]),
         start: event.createdAt,
         state: "running",
         taskId: event.taskId,
         triggerId: event.causationId,
+        parentId: owner?.id,
         events: [event],
         lane: 0,
         precise: true,
@@ -199,9 +249,9 @@ export function buildTimeline(input: RobotBusEvent[]): TimelineClip[] {
     if (/transcript.delta|speech\.|reply.delta/.test(event.eventType)) continue;
     clips.push({
       id: event.id,
-      title: titles[event.eventType] ?? agentTitle(event.sourceAgentId),
+      title: p.kind === "vision_tool" ? "视觉结果" : p.kind === "image" ? "读取图像" : titles[event.eventType] ?? agentTitle(event.sourceAgentId),
       agent: event.sourceAgentId,
-      track: clipTrack(event.sourceAgentId, event.eventType),
+      track: visionEvent ? "vision" : clipTrack(event.sourceAgentId, event.eventType),
       loop: loopOf([event]),
       start: event.createdAt,
       end: event.createdAt,
@@ -218,7 +268,7 @@ export function buildTimeline(input: RobotBusEvent[]): TimelineClip[] {
     for (const e of clip.events) eventOwner.set(e.id, clip.id);
   for (const clip of clips) {
     const trigger = clip.triggerId ? eventById.get(clip.triggerId) : undefined;
-    clip.parentId =
+    clip.parentId ??=
       trigger?.sourceSpanId ??
       (clip.triggerId ? eventOwner.get(clip.triggerId) : undefined);
     if (clip.parentId === clip.id) clip.parentId = undefined;

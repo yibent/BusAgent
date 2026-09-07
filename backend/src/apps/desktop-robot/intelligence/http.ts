@@ -36,6 +36,19 @@ export function intelligenceRoutes(
       }
     };
   app.get(
+    '/v1/tasks/status',
+    route(async () => {
+      const { enabled, paused, goals } = await engine.snapshot();
+      return {
+        enabled,
+        paused,
+        active: goals.filter(
+          (g) => !['completed', 'cancelled', 'blocked', 'paused'].includes(g.state),
+        ).length,
+      };
+    }),
+  );
+  app.get(
     '/v1/tasks',
     route(() => engine.snapshot()),
   );

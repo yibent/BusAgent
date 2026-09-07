@@ -1,5 +1,5 @@
 import { IntelligencePanel } from "@/components/workbench/IntelligencePanel";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Boxes, CircleHelp, LayoutPanelTop, Settings2, X } from "lucide-react";
 import { useConversation } from "@/hooks/useConversation";
 import { useRobotStatus } from "@/hooks/useRobotStatus";
@@ -44,6 +44,19 @@ export function WorkbenchPage() {
   >(null);
   const [help, setHelp] = useState(false);
   const [layoutVersion, setLayoutVersion] = useState(0);
+  const [queuePaused, setQueuePaused] = useState<boolean | null>(null);
+  useEffect(() => {
+    const abort = new AbortController();
+    const update = async () => {
+      try {
+        const response = await fetch('/v1/tasks/status', { signal: abort.signal, cache: 'no-store' });
+        if (response.ok) setQueuePaused((await response.json()).paused === true);
+      } catch { /* Existing connection indicator handles network outages. */ }
+    };
+    void update();
+    const timer = setInterval(() => void update(), 2000);
+    return () => { abort.abort(); clearInterval(timer); };
+  }, []);
   const perform = useCallback(
     async (action: () => Promise<unknown>, message: string) => {
       setBusy(true);
@@ -135,7 +148,7 @@ export function WorkbenchPage() {
               size="sm"
               onClick={() => setIntelligencePage("tasks")}
             >
-              任务队列
+              {queuePaused ? "任务队列 · 已暂停" : "任务队列"}
             </Button>
             <Button
               variant="ghost"
