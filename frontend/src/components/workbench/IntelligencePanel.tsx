@@ -22,7 +22,7 @@ type Profile = {
 };
 type Settings = {
   profiles: Profile[];
-  roles: { planner: string; supervisor: string };
+  roles: { planner: string; supervisor: string; dialogue?: string };
   images: boolean;
   recoveryBudget: number;
   fallbacks: { planner: string[]; supervisor: string[] };
@@ -299,11 +299,11 @@ export function IntelligencePanel({
                 />
               </label>
               <div className="model-role-grid">
-                {(["planner", "supervisor"] as const).map((role) => (
+                {(["planner", "supervisor", "dialogue"] as const).map((role) => (
                   <label key={role}>
-                    {role === "planner" ? "任务规划模型" : "任务监督模型"}
+                    {role === "planner" ? "任务规划模型" : role === "supervisor" ? "任务监督模型" : "即时回答模型"}
                     <select
-                      value={settings.roles[role]}
+                      value={settings.roles[role] ?? settings.roles.planner}
                       onChange={(e) =>
                         setSettings({
                           ...settings,

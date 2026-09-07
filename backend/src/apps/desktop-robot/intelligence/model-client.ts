@@ -35,6 +35,7 @@ export async function complete(
   messages: Message[],
   tools: Tool[],
   signal?: AbortSignal,
+  options: { maxTokens?: number } = {},
 ): Promise<ModelAnswer> {
   const started = performance.now();
   // GLM-5.3 only supports enabled thinking; use its budget control for speed.
@@ -52,7 +53,7 @@ export async function complete(
       model: profile.model,
       messages,
       stream: false,
-      max_tokens: 6000,
+      max_tokens: options.maxTokens ?? 6000,
       ...(tools.length
         ? { tools, tool_choice: 'auto', parallel_tool_calls: false }
         : {}),

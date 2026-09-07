@@ -18,6 +18,23 @@ const event = {
   createdAt: new Date().toISOString(),
 } as BusEvent;
 describe('execution timeline telemetry', () => {
+  it('runs every streaming stop check without creating a reasoning card for every token', async () => {
+    const hub = new ConversationHub();
+    const messages: unknown[] = [];
+    hub.subscribe('session', (m) => messages.push(m));
+    let checks = 0;
+    for (let i = 0; i < 30; i++)
+      await traceExecution(
+        hub,
+        { ...event, eventType: 'transcript.delta' },
+        'robot.interrupt_monitor',
+        () => {
+          checks++;
+        },
+      );
+    expect(checks).toBe(30);
+    expect(messages).toHaveLength(0);
+  });
   it('keeps overlapping asynchronous calls separate and reports the actual terminal state', async () => {
     const hub = new ConversationHub();
     const messages: Record<string, unknown>[] = [];

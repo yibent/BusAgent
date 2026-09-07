@@ -22,7 +22,11 @@ export const profileSchema = z.object({
 export type ModelProfile = z.infer<typeof profileSchema>;
 const configSchema = z.object({
   profiles: z.array(profileSchema).min(1),
-  roles: z.object({ planner: z.string(), supervisor: z.string() }),
+  roles: z.object({
+    planner: z.string(),
+    supervisor: z.string(),
+    dialogue: z.string().optional(),
+  }),
   fallbacks: z
     .object({
       planner: z.array(z.string()).default([]),
@@ -126,6 +130,16 @@ export class ModelConfig {
         ? [{ ...p, timeoutMs: p.timeoutMs ?? settings.performance.requestTimeoutMs }]
         : [];
     });
+  }
+  async dialogueProfiles(): Promise<ModelProfile[]> {
+    const settings = await this.settings();
+    const fallback = await this.profilesFor('planner');
+    const selected = settings.profiles.find(
+      (p) => p.id === settings.roles.dialogue && p.enabled && p.apiKey,
+    );
+    return selected
+      ? [selected, ...fallback.filter((p) => p.id !== selected.id)]
+      : fallback;
   }
   async authorize(token: unknown): Promise<void> {
     await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });

@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ContextMemory } from '../modules/conversation/context-memory.js';
 import { ConfigModule } from '../config/config.module.js';
 import { HostConfig } from '../config/host-config.js';
 import { DatabaseConnection } from './db/client.js';
@@ -28,6 +29,7 @@ import { AuditService } from '../observability/audit.service.js';
     AgentsRepository,
     RegistrationsRepository,
     EventsRepository,
+    ContextMemory,
     DeliveriesRepository,
     TasksRepository,
     IdempotencyRepository,
@@ -42,6 +44,7 @@ import { AuditService } from '../observability/audit.service.js';
     AgentsRepository,
     RegistrationsRepository,
     EventsRepository,
+    ContextMemory,
     DeliveriesRepository,
     TasksRepository,
     IdempotencyRepository,

@@ -18,7 +18,7 @@ export interface TimelineClip {
   precise: boolean;
 }
 const titles: Record<string, string> = {
-  "intent.created": "收到任务",
+  "intent.created": "收到请求",
   "instruction.parsed": "理解指令",
   "interaction.classified": "识别意图",
   "command.grounded": "确认目标",
@@ -57,6 +57,8 @@ export function agentTitle(agent: string) {
     dialogue: "对话回复",
     stt: "语音转写",
     "interrupt-monitor": "中断监听",
+    interrupt_monitor: "中断监听",
+    intelligence: "智能规划",
     tts: "语音合成",
   };
   return (
@@ -105,7 +107,8 @@ export function linkColor(key: string) {
 }
 export function buildTimeline(input: RobotBusEvent[]): TimelineClip[] {
   const events = [...new Map(input.map((e) => [e.id, e])).values()]
-    .filter((e) => Number.isFinite(e.createdAt))
+    .filter((e) => Number.isFinite(e.createdAt) && !(e.eventType.startsWith("node.") &&
+      String(e.payload.trigger_event_type ?? "").startsWith("transcript.")))
     .sort((a, b) => a.createdAt - b.createdAt);
   const clips: TimelineClip[] = [];
   const spans = new Map<string, TimelineClip>();

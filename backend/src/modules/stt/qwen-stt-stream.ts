@@ -66,6 +66,8 @@ export function connectQwenStt(
   });
 
   let ready = false;
+  const seenEvents = new Set<string>();
+  const completedItems = new Set<string>();
   const pending: Buffer[] = [];
 
   const sendJson = (payload: Record<string, unknown>): void => {
@@ -128,6 +130,19 @@ export function connectQwenStt(
       return;
     }
     const type = asText(msg.type);
+    const incomingId = asText(msg.event_id);
+    if (incomingId) {
+      if (seenEvents.has(incomingId)) return;
+      seenEvents.add(incomingId);
+      if (seenEvents.size > 2048) seenEvents.delete(seenEvents.values().next().value!);
+    }
+    const item = asText(msg.item_id);
+    if (
+      type.startsWith('conversation.item.input_audio_transcription.') &&
+      item &&
+      completedItems.has(item)
+    )
+      return;
     if (type === 'session.created') {
       sendSessionUpdate();
       return;
@@ -154,6 +169,11 @@ export function connectQwenStt(
       return;
     }
     if (type === 'conversation.item.input_audio_transcription.completed') {
+      if (item) {
+        completedItems.add(item);
+        if (completedItems.size > 512)
+          completedItems.delete(completedItems.values().next().value!);
+      }
       handlers.onPartial({
         text: asText(msg.transcript),
         isFinal: true,
@@ -165,7 +185,10 @@ export function connectQwenStt(
       handlers.onDone(asText(msg.transcript));
       return;
     }
-    if (type === 'error' || type === 'conversation.item.input_audio_transcription.failed') {
+    if (
+      type === 'error' ||
+      type === 'conversation.item.input_audio_transcription.failed'
+    ) {
       handlers.onError(new Error(errorMessage(msg)));
     }
   });

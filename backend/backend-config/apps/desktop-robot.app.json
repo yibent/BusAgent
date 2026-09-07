@@ -201,12 +201,12 @@
     {
       "event": "transcript.delta",
       "from": ["robot.stt"],
-      "to": ["robot.dialogue", "robot.interrupt_monitor"]
+      "to": ["robot.interrupt_monitor"]
     },
     {
       "event": "transcript.final",
       "from": ["robot.stt"],
-      "to": ["robot.dialogue", "robot.interrupt_monitor"]
+      "to": ["robot.interrupt_monitor"]
     },
     {
       "event": "intent.created",

@@ -24,6 +24,9 @@ export async function traceExecution<T>(
   agentId: string,
   run: () => T | Promise<T>,
 ): Promise<T> {
+  // Streaming hypotheses are transport activity, not one reasoning operation
+  // per six characters. Interrupt handlers still execute and publish real stops.
+  if (event.eventType.startsWith('transcript.')) return run();
   const id = randomUUID();
   const started = Date.now();
   let pending = 1,

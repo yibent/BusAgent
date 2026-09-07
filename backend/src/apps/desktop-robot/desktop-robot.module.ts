@@ -1,6 +1,6 @@
 import { PersistenceModule } from '../../persistence/persistence.module.js';
 import { QueueStore } from './intelligence/queue-store.js';
-import { ModelConfig } from './intelligence/model-config.js';
+import { ModelConfigModule } from './intelligence/model-config.module.js';
 import { TaskEngine } from './intelligence/task-engine.js';
 import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '../../config/config.module.js';
@@ -29,6 +29,7 @@ import { RobotControlProxy } from './robot-control-proxy.js';
 @Module({
   imports: [
     ConfigModule,
+    ModelConfigModule,
     PersistenceModule,
     RuntimeModule,
     forwardRef(() => BusModule),
@@ -38,7 +39,6 @@ import { RobotControlProxy } from './robot-control-proxy.js';
   ],
   providers: [
     QueueStore,
-    ModelConfig,
     TaskEngine,
     InterruptMonitorNode,
     InstructionUnderstandingNode,
@@ -53,7 +53,7 @@ import { RobotControlProxy } from './robot-control-proxy.js';
   ],
   exports: [
     TaskEngine,
-    ModelConfig,
+    ModelConfigModule,
     SttModule,
     DialogueModule,
     TtsModule,

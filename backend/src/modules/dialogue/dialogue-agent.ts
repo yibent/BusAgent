@@ -1,4 +1,5 @@
 import { intelligenceEnabled } from '../../apps/desktop-robot/intelligence/types.js';
+import { IntelligentDialogue } from './intelligent-dialogue.js';
 import { trackBackground } from '../../observability/execution-span.js';
 import { readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
@@ -189,6 +190,7 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
     private readonly hub: ConversationHub,
     private readonly tts: TtsAgent,
     private readonly interruptions: ConversationInterruptions,
+    private readonly intelligentDialogue?: IntelligentDialogue,
   ) {}
 
   onModuleInit(): void {
@@ -215,6 +217,7 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
   }
 
   private interrupt(conversationId: string): void {
+    this.intelligentDialogue?.interrupt(conversationId);
     this.quietUntil.set(conversationId, Date.now() + 2500);
     this.abort.get(conversationId)?.abort();
     this.abort.delete(conversationId);
@@ -224,6 +227,10 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
   }
 
   async handle(context: InProcessEventContext): Promise<void> {
+    if (intelligenceEnabled() && this.intelligentDialogue) {
+      this.intelligentDialogue.handle(context);
+      return;
+    }
     if (context.event.eventType === 'intelligence.reply') {
       await this.replyWithFact(
         context,
@@ -233,8 +240,6 @@ export class DialogueAgent implements InProcessAgent, OnModuleInit, OnModuleDest
       return;
     }
     if (intelligenceEnabled()) {
-      if (context.event.eventType.startsWith('transcript.'))
-        this.tts.cancel(context.event.correlationId);
       return;
     }
     const parallel = context.agentConfig.config.parallel_interaction === true;

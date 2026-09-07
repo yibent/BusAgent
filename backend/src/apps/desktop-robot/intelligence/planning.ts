@@ -16,6 +16,7 @@ import {
 } from './types.js';
 
 export const SYSTEM = `你是 BusAgent 的 Panda 任务规划/监督节点。理解自然语言目标，根据真实场景自主选择观察、抓取、放置工具和快慢环。
+对话节点与你并行接话，你负责实际查询/规划并把结果交给它；不要再输出固定接收提示。“刚才做了什么”、进度、原因和能力问题是信息查询，在机械臂忙或暂停时也能回答，不生成动作。conversation_context 包含有来源的对话记忆和任务摘要；不足时主动 read_history 查原始记录，不能让用户重述。历史助手话语不是执行证据；以最新队列和执行结果为准，区分成功、失败、取消、未完成。用户改口以当前原话为准。查询结果用outcome=chat返回。
 若 planning_ahead 存在：当前物理动作尚未完成，只为它成功后的独立明确新任务准备simple动作；不能宣称完成、不能管理队列或读取图片。需要当前动作结果或新观察才能决定时，返回blocked交给正式规划。角色 planner：简单指令直接生成所需动作；复杂目标先输出自然语言方案、完成条件(mode=complex)，由 supervisor 展开队列。角色 supervisor：根据现有队列、真实结果和新观察滚动生成剩余步骤，成功步骤绝不重放。
 用户新操作默认追加任务；不把新指令自动当成替换旧任务。明确修改/取消通过队列工具处理。没有真实歧义无需询问用户。允许多个物体、连续任务、自由桌面放置、其他物体顶面放置，不受配置资产名字和旧单动作意图枚举限制。
 纯信息查询（描述、计数、只观察或选择但暂不运动）可用read_image/observe_objects获得证据后，通过submit_plan的outcome=chat、actions=[]返回信息答案。观察答复简短说明选择、位置和不确定性，不复述所有候选坐标和长ref。chat包含这种观察答复，不只闲聊；不要为完成纯观察而生成运动。outcome=complete专用于监督核对已经执行的动作任务。
@@ -44,6 +45,23 @@ const object = (properties: Record<string, unknown>, required: string[]) => ({
   additionalProperties: false,
 });
 export const TOOLS: Tool[] = [
+  {
+    type: 'function',
+    function: {
+      name: 'read_history',
+      description:
+        '查询当前会话原始对话/执行记录，或用goal_引用读取机器人任务详情。默认返回最近记录；可按关键词、来源ref检索，before翻页。只读且不等待机械臂。',
+      parameters: object(
+        {
+          query: { type: 'string' },
+          ref: { type: 'string' },
+          before: { type: 'string' },
+          limit: { type: 'integer', minimum: 1, maximum: 80 },
+        },
+        [],
+      ),
+    },
+  },
   {
     type: 'function',
     function: {
@@ -196,6 +214,13 @@ export const TOOLS: Tool[] = [
 ];
 
 export interface PlanningContext {
+  conversation?: unknown;
+  readHistory?(args: {
+    query?: string;
+    ref?: string;
+    before?: string;
+    limit?: number;
+  }): Promise<unknown>;
   readState(): Promise<Record<string, unknown>>;
   readImage(
     camera: string,
@@ -231,6 +256,7 @@ export async function planGoal(
       role: 'user',
       content: JSON.stringify({
         role,
+        conversation_context: context.conversation,
         planning_ahead: context.ahead,
         goal: planningGoal(goal),
         queue: queue.goals
@@ -312,7 +338,16 @@ export async function planGoal(
           await context.validate?.(decision);
           return decision;
         }
-        if (tool.function.name === 'read_state')
+        if (tool.function.name === 'read_history') {
+          if (!context.readHistory) throw new Error('当前历史查询不可用');
+          result = await context.readHistory(args);
+          await context.record({
+            kind: 'history_read',
+            role,
+            ref: args.ref,
+            before: args.before,
+          });
+        } else if (tool.function.name === 'read_state')
           result = planningEvidence(await context.readState());
         else if (
           ['observe_objects', 'ground_region', 'inspect_object'].includes(
@@ -397,9 +432,10 @@ export async function planGoal(
             !args.purpose.trim()
           )
             throw new Error('请指定相机和看图用途。');
-          const frame = args.observation_ref
-            ? await context.readImage(String(args.camera), String(args.observation_ref))
-            : await context.readImage(String(args.camera));
+          const frame =
+            typeof args.observation_ref === 'string' && args.observation_ref
+              ? await context.readImage(String(args.camera), args.observation_ref)
+              : await context.readImage(String(args.camera));
           const ref = randomUUID();
           imageFrames.set(ref, frame.metadata);
           await context.record({

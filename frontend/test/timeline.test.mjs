@@ -3,6 +3,14 @@ import assert from 'node:assert/strict';
 import { buildTimeline, linkColor } from '../src/lib/timeline.ts';
 const event = (id, eventType, createdAt, extra = {}) => ({ id, eventType, createdAt, sourceAgentId: 'robot.executor', payload: {}, ...extra });
 const node = (id, state, time, spanId, agent, payload = {}) => event(id, `node.${state}`, time, { sourceAgentId: agent, payload: { span_id: spanId, started_at_ms: 1000, ...payload } });
+test('old streaming no-op spans do not clutter the timeline; actual interruption is retained', () => {
+  const clips = buildTimeline([
+    node('a', 'started', 1000, 'A', 'robot.dialogue', { trigger_event_type: 'transcript.delta' }),
+    node('b', 'completed', 1010, 'A', 'robot.dialogue', { trigger_event_type: 'transcript.delta' }),
+    event('stop', 'interrupt.requested', 1020),
+  ]);
+  assert.equal(clips.length, 1); assert.equal(clips[0].title, '中断请求');
+});
 test('results from old hosts remain instants rather than invented model durations', () => {
   const [clip] = buildTimeline([event('a', 'perception.reported', 5000)]);
   assert.equal(clip.start, 5000); assert.equal(clip.end, 5000); assert.equal(clip.precise, false);

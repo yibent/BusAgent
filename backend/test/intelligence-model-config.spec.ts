@@ -36,6 +36,17 @@ describe('private model profiles', () => {
       'private-test-key',
     );
   });
+  it('persists an independently selectable dialogue profile and shares settings updates immediately', async () => {
+    const settings = await models.publicSettings();
+    await expect(models.save(settings, 'wrong')).rejects.toThrow('管理令牌');
+    const token = await readFile(models.tokenPath, 'utf8');
+    settings.roles.dialogue = 'qwen-plus';
+    await models.save(settings, token);
+    expect((await models.dialogueProfiles())[0]?.id).toBe('qwen-plus');
+    expect((await new ModelConfig({} as HostConfig).settings()).roles.dialogue).toBe(
+      'qwen-plus',
+    );
+  });
   it('isolates Qwen and GLM thinking parameters and does not log remote error bodies', async () => {
     const profile = await models.profile('planner');
     const request = vi.fn().mockImplementation(() =>

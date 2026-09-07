@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPcmPlayer, type PcmPlayer } from "../lib/pcm-player";
+import { ConversationDedup } from "../lib/conversation-dedup";
 
 export type MessageRole = "user" | "assistant" | "notice";
 
@@ -34,6 +35,8 @@ type Activity =
   | "error";
 
 interface ServerMessage {
+  utterance_id?: string;
+  seq?: number;
   type?: string;
   text?: string;
   message?: string;
@@ -123,7 +126,7 @@ export function useConversation() {
   const reconnectRef = useRef<() => void>(() => {});
   const mountedRef = useRef(false);
   const socketPromiseRef = useRef<Promise<WebSocket> | null>(null);
-  const conversationIdRef = useRef(crypto.randomUUID());
+  const conversationIdRef = useRef(sessionStorage.getItem("busagent.conversation") ?? crypto.randomUUID());
   const captureRef = useRef<CaptureState>(EMPTY_CAPTURE);
   const listeningRef = useRef(false);
   const speakingRef = useRef(false);
@@ -133,6 +136,7 @@ export function useConversation() {
   const transcriptIdRef = useRef<string | null>(null);
   const assistantIdRef = useRef<string | null>(null);
   const committedTranscriptRef = useRef("");
+  const dedupRef = useRef(new ConversationDedup());
   const playerRef = useRef<PcmPlayer | null>(null);
 
   const appendMessage = useCallback(
@@ -251,6 +255,7 @@ export function useConversation() {
           setActivity("listening");
           return;
         case "transcript.delta": {
+          if (!dedupRef.current.accept(message)) return;
           if (speakingRef.current) return;
           if (transcriptIdRef.current === null) {
             transcriptIdRef.current = appendMessage("user", "");
@@ -265,6 +270,7 @@ export function useConversation() {
           return;
         }
         case "transcript.final": {
+          if (!dedupRef.current.accept(message)) return;
           if (speakingRef.current) return;
           const finalText = message.text?.trim() ?? "";
           if (finalText.length > 0) {
@@ -284,6 +290,7 @@ export function useConversation() {
           return;
         }
         case "reply.start":
+          if (!dedupRef.current.accept(message)) return;
           currentTurnRef.current = message.turn ?? currentTurnRef.current + 1;
           ignoreSpeechRef.current = false;
           ignoredReplyTurnRef.current = null;
@@ -319,6 +326,7 @@ export function useConversation() {
           setActivity(speakingRef.current ? "speaking" : "thinking");
           return;
         case "reply.final":
+          if (!dedupRef.current.accept(message)) return;
           if (
             isStaleTurn(message) ||
             message.turn === ignoredReplyTurnRef.current
@@ -418,6 +426,9 @@ export function useConversation() {
       }
     };
     socket.onopen = () => {
+      sessionStorage.setItem("busagent.conversation", conversationIdRef.current);
+      dedupRef.current.resetReplies();
+      currentTurnRef.current = 0;
       setConnected(true);
       setActivity("idle");
     };
@@ -571,6 +582,8 @@ export function useConversation() {
     socketPromiseRef.current = null;
     oldSocket?.close();
     conversationIdRef.current = crypto.randomUUID();
+    sessionStorage.setItem("busagent.conversation", conversationIdRef.current);
+    dedupRef.current = new ConversationDedup();
     transcriptIdRef.current = null;
     assistantIdRef.current = null;
     committedTranscriptRef.current = "";

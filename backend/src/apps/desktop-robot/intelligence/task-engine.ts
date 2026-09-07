@@ -1,4 +1,8 @@
 import { canPrepareAhead, independentAhead } from './lookahead.js';
+import {
+  compactContext,
+  ContextMemory,
+} from '../../../modules/conversation/context-memory.js';
 import { validatePlan } from '../plan-validator-node.js';
 import { randomUUID } from 'node:crypto';
 import {
@@ -35,6 +39,11 @@ import {
 import type { RobotPlan } from '../instruction-types.js';
 
 const now = () => new Date().toISOString();
+interface ReplyTo {
+  conversation: string;
+  instruction: string;
+  text: string;
+}
 const record = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
 const activeGoal = (state: QueueState) =>
@@ -176,7 +185,9 @@ export function applyResult(
       goal.recovery_count = 0;
     goal.state = step.review_after || result.review_required ? 'review' : 'running';
     goal.review_reason = result.review_required
-      ? String(result.review_reason ?? '动作后证据不确定，需要检查已完成动作。')
+      ? typeof result.review_reason === 'string'
+        ? result.review_reason
+        : '动作后证据不确定，需要检查已完成动作。'
       : step.review_after
         ? `步骤“${step.title}”已完成，需要根据观察决定后续。`
         : '';
@@ -196,6 +207,7 @@ export class TaskEngine
   private timer?: ReturnType<typeof setInterval>;
   private ticking = false;
   private job: { id: string; abort: AbortController } | undefined;
+  private intakeJobs = new Map<string, AbortController>();
   private ahead:
     | {
         goal: Goal;
@@ -215,6 +227,7 @@ export class TaskEngine
     private readonly models: ModelConfig,
     private readonly runtime: RuntimeState,
     private readonly bus: EventBus,
+    private readonly memory?: ContextMemory,
   ) {}
   onModuleInit() {
     if (!AgentClasses.has(this.registrationKey))
@@ -229,6 +242,7 @@ export class TaskEngine
   onModuleDestroy() {
     if (this.timer) clearInterval(this.timer);
     this.job?.abort.abort();
+    for (const abort of this.intakeJobs.values()) abort.abort();
     this.ahead?.abort.abort();
   }
   private base() {
@@ -369,7 +383,13 @@ export class TaskEngine
       `reply:${goal.id}:${randomUUID()}`,
       'intelligence.reply',
       goal.conversation_id,
-      { text: message, goal_id: goal.id },
+      {
+        text: message,
+        goal_id: goal.id,
+        instruction_id: goal.input_event_id,
+        user_text: goal.source,
+        goal_state: goal.state,
+      },
     );
   }
   async handle(context: InProcessEventContext) {
@@ -379,16 +399,21 @@ export class TaskEngine
       const input = record(event.payload).text;
       const text = typeof input === 'string' ? input.trim() : '';
       if (!text) return;
+      const replyTo = {
+        conversation: event.correlationId,
+        instruction: event.eventId,
+        text,
+      };
       if (/^(暂停|停止|停下|停|stop|pause)[。！!\s]*$/i.test(text)) {
-        await this.control('pause');
+        await this.control('pause', undefined, true, '', undefined, replyTo);
         return;
       }
       if (/^(继续|恢复|继续执行|resume)[。！!\s]*$/i.test(text)) {
-        await this.control('resume');
+        await this.control('resume', undefined, true, '', undefined, replyTo);
         return;
       }
       if (/^(取消|取消当前任务|cancel)[。！!\s]*$/i.test(text)) {
-        await this.control('cancel');
+        await this.control('cancel', undefined, true, '', undefined, replyTo);
         return;
       }
       if (/^(状态|进度|现在在做什么|做到哪了|还剩什么)[？?。\s]*$/.test(text)) {
@@ -403,21 +428,29 @@ export class TaskEngine
               text: active
                 ? `${active.summary || active.source}：${active.state}，已完成 ${active.steps.filter((s) => s.state === 'completed').length}/${active.steps.length} 步。${active.message}`
                 : '当前没有正在执行的任务。',
+              instruction_id: event.eventId,
+              user_text: text,
             },
           );
         });
         return;
       }
-      await this.store.change((state, emit) => {
-        if (state.receipts.includes(event.eventId)) return;
-        state.receipts.push(event.eventId);
+      await this.store.change((state) => {
+        const utterance = record(event.payload).utterance_id;
+        const receipt =
+          typeof utterance === 'string'
+            ? `utterance:${event.correlationId}:${utterance}`
+            : event.eventId;
+        if (state.receipts.includes(receipt)) return;
+        state.receipts.push(receipt);
         const goal: Goal = {
           id: `goal_${event.eventId}`,
           conversation_id: event.correlationId,
           input_event_id: event.eventId,
           source: text,
-          interaction:
-            /取消|暂停|停止|继续|恢复|修改|改成|改为|状态|进度|做到哪|还剩/.test(text),
+          // All fresh requests can be interpreted while the arm is busy.
+          // The model decides chat/query/action; only accepted actions join motion dispatch.
+          interaction: true,
           state: 'queued',
           mode: 'simple',
           summary: '',
@@ -432,14 +465,6 @@ export class TaskEngine
           revision: 1,
         };
         state.goals.push(goal);
-        const waiting = state.goals.filter((g) => !ended(g)).length;
-        this.reply(
-          emit,
-          goal,
-          waiting > 1
-            ? `已加入任务队列，前面还有 ${waiting - 1} 项任务。`
-            : '正在结合当前场景规划任务。',
-        );
       });
     } else if (event.eventType === 'perception.reported') {
       await this.store.change((state) => {
@@ -473,7 +498,10 @@ export class TaskEngine
     interrupt = true,
     instruction = '',
     requestorId?: string,
+    replyTo?: ReplyTo,
   ): Promise<QueueState> {
+    if (id && id !== requestorId && ['pause', 'cancel', 'amend'].includes(action))
+      this.intakeJobs.get(id)?.abort();
     this.ahead?.abort.abort();
     this.ahead = undefined;
     if (!['pause', 'resume', 'cancel', 'retry', 'up', 'amend'].includes(action))
@@ -544,12 +572,36 @@ export class TaskEngine
         goal.updated_at = now();
         this.reply(
           emit,
-          goal,
+          replyTo
+            ? {
+                ...goal,
+                conversation_id: replyTo.conversation,
+                input_event_id: replyTo.instruction,
+                source: replyTo.text,
+              }
+            : goal,
           action === 'pause'
             ? '已暂停任务队列，保留当前持物与剩余步骤。'
             : action === 'cancel'
               ? '已取消该任务，其余任务保留。'
               : '任务队列已更新。',
+        );
+      } else if (replyTo) {
+        this.emit(
+          emit,
+          `control-reply:${replyTo.instruction}`,
+          'intelligence.reply',
+          replyTo.conversation,
+          {
+            instruction_id: replyTo.instruction,
+            user_text: replyTo.text,
+            text:
+              action === 'pause'
+                ? '任务队列已暂停，当前没有活动任务。'
+                : action === 'resume'
+                  ? '任务队列已恢复，当前没有待执行任务。'
+                  : '当前没有可取消的活动任务。',
+          },
         );
       }
       const ownsMotion = goal?.steps.some(inFlight);
@@ -601,12 +653,12 @@ export class TaskEngine
       await this.flush();
       const state = await this.store.read();
       // Controller reconciliation also runs while paused/cancelled, retaining measured holding state.
-      const interaction = state.goals.find(
+      for (const interaction of state.goals.filter(
         (g) => g.interaction && g.state === 'queued',
-      );
-      if (interaction && !this.job) {
-        this.startPlanning(interaction, state, 'planner');
-        return;
+      )) {
+        if (this.intakeJobs.size >= 2) break;
+        if (!this.intakeJobs.has(interaction.id))
+          this.startPlanning(interaction, state, 'planner', true);
       }
       const flight = state.goals.flatMap((g) => g.steps).find(inFlight);
       if (flight) {
@@ -617,6 +669,14 @@ export class TaskEngine
       if (state.paused || this.job) return;
       const goal = activeGoal(state);
       if (!goal) return;
+      if (goal.interaction || this.intakeJobs.has(goal.id)) return;
+      if (goal.state === 'queued' && goal.steps.some((s) => s.state === 'pending')) {
+        await this.store.change((current) => {
+          const ready = current.goals.find((g) => g.id === goal.id);
+          if (ready?.state === 'queued' && !current.paused) ready.state = 'running';
+        });
+        goal.state = 'running';
+      }
       if (goal.state === 'queued' && (await this.useAhead(goal, state))) return;
       if (goal.state === 'queued' || goal.state === 'review') {
         this.startPlanning(
@@ -758,7 +818,9 @@ export class TaskEngine
   private async prepareAhead(state: QueueState, flight: QueueStep) {
     if (state.paused || this.job || this.ahead) return;
     const current = state.goals.find((g) => g.steps.some((s) => s.id === flight.id));
-    const next = state.goals.find((g) => g.state === 'queued' && !g.interaction);
+    const next = state.goals.find(
+      (g) => g.state === 'queued' && !g.interaction && !g.steps.length,
+    );
     if (!current || !next || !canPrepareAhead(current, flight, next)) return;
     const key = `${next.id}:${next.revision}`;
     if (this.aheadAttempted.has(key)) return;
@@ -902,15 +964,17 @@ export class TaskEngine
     return true;
   }
 
-  private startPlanning(goal: Goal, state: QueueState, role: Role) {
+  private startPlanning(goal: Goal, state: QueueState, role: Role, intake = false) {
     const abort = new AbortController();
-    this.job = { id: goal.id, abort };
+    if (intake) this.intakeJobs.set(goal.id, abort);
+    else this.job = { id: goal.id, abort };
     void this.runPlanning(goal, state, role, abort.signal)
       .catch(async (error) => {
         if (abort.signal.aborted) return;
         await this.store.change((current, emit) => {
           const g = current.goals.find((g) => g.id === goal.id);
-          if (!g || ended(g) || g.state === 'paused') return;
+          if (!g || g.revision !== goal.revision || ended(g) || g.state === 'paused')
+            return;
           g.state = 'blocked';
           g.message = (error as Error).message;
           g.updated_at = now();
@@ -918,7 +982,8 @@ export class TaskEngine
         });
       })
       .finally(() => {
-        if (this.job?.id === goal.id) this.job = undefined;
+        if (intake) this.intakeJobs.delete(goal.id);
+        else if (this.job?.id === goal.id) this.job = undefined;
       });
   }
   private async runPlanning(
@@ -960,6 +1025,24 @@ export class TaskEngine
       state,
       {
         images: settings.images,
+        conversation: await this.memory?.view(goal.conversation_id),
+        ...(this.memory
+          ? {
+              readHistory: async (args: {
+                query?: string;
+                ref?: string;
+                before?: string;
+                limit?: number;
+              }) => {
+                const history = await this.memory!.history(goal.conversation_id, args);
+                return {
+                  ...compactContext(history.entries, {}, 4500),
+                  has_more: history.has_more,
+                  before: 'before' in history ? history.before : undefined,
+                };
+              },
+            }
+          : {}),
         fallbackProfiles: profiles.slice(1),
         toolRounds: settings.performance?.toolRounds ?? 6,
         manageQueue: async (action, id, instruction) => {
@@ -1007,6 +1090,7 @@ export class TaskEngine
             throw new Error(
               '仍有待处理或失败步骤，请先恢复或调整剩余计划，再根据新的执行证据核对目标。',
             );
+          if (!decision.actions.length) return;
           const live = await this.live();
           const skills = record(live.capabilities).skills;
           for (const action of decision.actions) {
@@ -1020,7 +1104,18 @@ export class TaskEngine
           }
         },
         readState: async () => {
-          const live = await this.live();
+          let live: Record<string, unknown>;
+          try {
+            live = await this.live();
+          } catch (error) {
+            // Historical questions and queue queries remain available during a
+            // simulator outage. Motion still validates against fresh capabilities.
+            return {
+              available: false,
+              error: String(error),
+              holding: { verified: false, unknown: true },
+            };
+          }
           await this.store.change((state) => {
             if (
               typeof live.runtime_id === 'string' &&
@@ -1058,7 +1153,7 @@ export class TaskEngine
       signal,
     );
     signal.throwIfAborted();
-    const live = await this.live();
+    const live = decision.actions.length ? await this.live() : {};
     await this.store.change((_, emit) =>
       this.emit(
         emit,
@@ -1145,7 +1240,7 @@ export class TaskEngine
         if (['pending', 'failed', 'cancelled'].includes(step.state))
           step.state = 'superseded';
       goal.steps.push(...stepsFor(decision.actions));
-      goal.state = 'running';
+      goal.state = role === 'planner' ? 'queued' : 'running';
       goal.message = `接下来：${decision.actions.map((a) => a.title).join('；')}。`;
       this.reply(emit, goal, goal.message);
     });

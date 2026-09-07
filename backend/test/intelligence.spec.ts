@@ -222,7 +222,7 @@ describe('durable goal execution', () => {
     await drain();
     expect(planning.planGoal).toHaveBeenCalledTimes(2);
     expect(store.state.goals[1]!.state).toBe('queued');
-    expect(store.state.goals[1]!.steps).toHaveLength(0);
+    expect(store.state.goals[1]!.steps[0]!.state).toBe('pending');
     await engine.handle(
       context(
         'done',
@@ -413,8 +413,10 @@ describe('durable goal execution', () => {
     await engine.handle(
       context('manage', 'intent.created', { text: '取消刚才那个红色方块任务' }),
     );
-    vi.mocked(planning.planGoal).mockResolvedValueOnce(
-      decision({ outcome: 'chat', actions: [], message: '队列已更新' }),
+    vi.mocked(planning.planGoal).mockImplementation(async (_profile, _role, goal) =>
+      goal.source.includes('取消')
+        ? decision({ outcome: 'chat', actions: [], message: '队列已更新' })
+        : decision(),
     );
     await tick();
     await drain();
@@ -423,6 +425,57 @@ describe('durable goal execution', () => {
     );
     expect(store.state.goals[1]!.state).toBe('queued');
     expect(store.state.goals[0]!.steps[0]!.state).toBe('dispatching');
+  });
+  it('answers history while another planner is slow without enqueueing a physical action or a canned receipt', async () => {
+    let finish!: (decision: Decision) => void;
+    vi.mocked(planning.planGoal).mockImplementation(async (_profile, _role, goal) =>
+      goal.source.includes('刚才')
+        ? decision({ outcome: 'chat', actions: [], message: '刚才尚未开始动作。' })
+        : new Promise((resolve) => {
+            finish = resolve;
+          }),
+    );
+    await engine.handle(context('slow'));
+    await tick();
+    await drain();
+    await engine.handle(
+      context('query', 'intent.created', {
+        text: '我们刚才都干了啥',
+        utterance_id: 'u1',
+      }),
+    );
+    await engine.handle(
+      context('query-replay', 'intent.created', {
+        text: '我们刚才都干了啥',
+        utterance_id: 'u1',
+      }),
+    );
+    expect(store.state.goals).toHaveLength(2);
+    expect(store.events.some((e) => JSON.stringify(e).includes('已加入任务队列'))).toBe(
+      false,
+    );
+    await tick();
+    await drain();
+    expect(store.state.goals[0]!.state).toBe('planning');
+    expect(store.state.goals[1]!.state).toBe('completed');
+    expect(store.state.goals[1]!.steps).toHaveLength(0);
+    finish(decision());
+    await drain();
+  });
+  it('correlates immediate pause feedback with the new utterance rather than the original motion request', async () => {
+    await engine.handle(context('original'));
+    await tick();
+    await drain();
+    await engine.handle(context('pause-input', 'intent.created', { text: '暂停' }));
+    const payloads = store.events
+      .filter((e) => e.event.event_type === 'intelligence.reply')
+      .map((e) => e.event.payload);
+    expect(payloads.at(-1)).toMatchObject({
+      instruction_id: 'pause-input',
+      user_text: '暂停',
+      goal_state: 'paused',
+    });
+    expect(store.state.goals[0]!.source).toBe('拿起来再放下');
   });
   it('does not confuse an outline with completed physical execution', async () => {
     vi.mocked(planning.planGoal)
@@ -660,6 +713,44 @@ describe('model-driven observation', () => {
         },
       ],
     },
+  });
+  it('retrieves archived context through the planner tool and returns information without actions', async () => {
+    const history = vi.fn().mockResolvedValue({
+      recent: [{ ref: 'old', text: '先别重试，等我指定放置位置' }],
+    });
+    const call = vi
+      .fn()
+      .mockResolvedValueOnce(answer('read_history', { ref: 'old' }))
+      .mockResolvedValueOnce(
+        answer(
+          'submit_plan',
+          decision({
+            outcome: 'chat',
+            actions: [],
+            message: '你刚才要求先别重试，等待指定位置。',
+          }),
+        ),
+      );
+    const result = await planning.planGoal(
+      profile,
+      'planner',
+      { source: '刚才我说过什么', steps: [] } as unknown as Goal,
+      emptyQueue(),
+      {
+        conversation: { omitted: 20, archive_available: true },
+        images: false,
+        readHistory: history,
+        readState: async () => ({ available: false }),
+        readImage: vi.fn(),
+        record: vi.fn(),
+      },
+      new AbortController().signal,
+      call,
+    );
+    expect(history).toHaveBeenCalledWith({ ref: 'old' });
+    expect(JSON.stringify(call.mock.calls[1]?.[1])).toContain('先别重试');
+    expect(result.actions).toHaveLength(0);
+    expect(result.outcome).toBe('chat');
   });
   const fakeGoal = {
     id: 'goal',
