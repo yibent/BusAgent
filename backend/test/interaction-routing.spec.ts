@@ -7,10 +7,46 @@ import {
   isSceneQuestion,
   relevantGoals,
   statusReply,
+  hasMeaningfulInput,
 } from '../src/apps/desktop-robot/intelligence/interaction-routing.js';
 import { emptyQueue, type Goal } from '../src/apps/desktop-robot/intelligence/types.js';
 
 describe('immediate interaction routes', () => {
+  it('drops punctuation-only recognition without dropping Chinese, numbers or mixed instructions', () => {
+    for (const text of ['。', '……', '！？', '  ', '🎤'])
+      expect(hasMeaningfulInput(text)).toBe(false);
+    for (const text of ['嗯', '2', '现在在干啥', '先放下，再说。'])
+      expect(hasMeaningfulInput(text)).toBe(true);
+  });
+  it('answers spoken status and queue questions from live task records including intake', () => {
+    const state = emptyQueue();
+    state.goals.push({
+      id: 'intake',
+      source: '把其他方块放进蓝色容器',
+      summary: '',
+      conversation_id: 'c',
+      state: 'planning',
+      interaction: true,
+      steps: [],
+      created_at: '',
+    } as unknown as Goal);
+    for (const text of [
+      '现在在干啥？',
+      '你现在在做什么？',
+      '嗯，我后面的任务呢。',
+      '后续任务有哪些？',
+    ]) {
+      const reply = statusReply(state, text, 'c');
+      expect(reply?.text).toContain('把其他方块');
+      expect(reply?.text).toContain('规划');
+    }
+    for (const text of [
+      '现在把红块放好',
+      '你现在在干啥，先把方块拿起来',
+      '后面的任务取消',
+    ])
+      expect(statusReply(state, text, 'c')).toBeUndefined();
+  });
   it('answers explicit scene questions with one small image request and no motion tools', async () => {
     const readState = vi.fn().mockResolvedValue({});
     const readImage = vi.fn().mockResolvedValue({

@@ -2,6 +2,7 @@ import type { Action, Goal, QueueState } from './types.js';
 
 // These are optional shortcuts. Anything not fully matched still reaches the planner.
 const compact = (text: string) => text.replace(/[\s，。！？、,.!?]/g, '').toLowerCase();
+export const hasMeaningfulInput = (text: string) => /[\p{L}\p{N}]/u.test(text);
 export const isAcknowledgement = (text: string) =>
   /^(?:嗯|呃|啊|哦|噢|唔|好的|好|收到|知道了|明白了|谢谢)+$/.test(compact(text));
 const command = (text: string) =>
@@ -107,6 +108,32 @@ export function statusReply(
   conversation: string,
 ): { text: string; goal?: Goal } | undefined {
   const input = compact(text).replace(/^(?:(?:嗯|呃|啊))*/, '');
+  const currentQuestion =
+    /^(?:请问|请|帮我看看)?(?:你|你们|系统|机械臂|机器人)?(?:现在|当前|目前)?(?:正在|在)?(?:干啥|干什么|做啥|做什么|忙什么|忙啥|执行什么|执行哪个任务)(?:呢|呀|啊|吗)?$/.test(
+      input,
+    );
+  const queueQuestion =
+    /^(?:请问|帮我看看|看看)?(?:我|我们|你)?(?:现在|当前)?(?:的)?(?:后面|后续|接下来|剩下|剩余|待执行|队列里|队列中)(?:的)?(?:任务|动作|安排)(?:呢|有哪些|是什么|是什么情况)?$/.test(
+      input,
+    );
+  if (queueQuestion) {
+    const goals = state.goals.filter(
+      (g) =>
+        ['queued', 'planning', 'running', 'review', 'paused'].includes(g.state) &&
+        (g.conversation_id === conversation || !g.interaction || g.steps.length > 0),
+    );
+    const descriptions = goals.map((g) => {
+      const running = g.steps.find((s) =>
+        ['running', 'dispatching', 'unknown'].includes(s.state),
+      );
+      return `${g.summary || g.source}：${running ? `正在执行“${running.title}”` : g.state === 'planning' ? '正在规划' : state.paused || g.state === 'paused' ? '已暂停' : '等待执行'}`;
+    });
+    return {
+      text: descriptions.length
+        ? descriptions.join('；') + '。'
+        : '当前没有待执行的任务。',
+    };
+  }
   const followup = /^(?:还没|还没有|已经|现在)(?:看到|看清|看完)(?:了)?吗$/.test(input);
   const named =
     /^(?:请问|帮我查一下|查一下)?(.+?)(?:任务|动作)?(?:执行[得的]?)?(?:怎么样了|怎样了|到哪了|完成了吗|结束了吗|执行了吗|开始了吗|的进度|的状态)$/.exec(
@@ -114,6 +141,7 @@ export function statusReply(
     );
   const subject = named?.[1]?.replace(/(?:的)?(?:任务|动作)$/, '');
   const status =
+    currentQuestion ||
     /^(?:请问|请|帮我|查一下|看看)?(?:当前|现在)?(?:的)?(?:状态|进度|正在做什么|在做什么|做到哪了|还剩什么)$/.test(
       input,
     ) ||
@@ -125,6 +153,13 @@ export function statusReply(
     );
   if (!status && !followup && !named) return undefined;
   const goals = contextualGoals(state, conversation);
+  // Intake interpretation is also real work, even before it has produced actions.
+  const intake = state.goals.find(
+    (g) =>
+      g.conversation_id === conversation &&
+      g.interaction &&
+      ['queued', 'planning'].includes(g.state),
+  );
   const goal = followup
     ? state.goals.findLast(
         (g) => g.conversation_id === conversation && isSceneQuestion(g.source),
@@ -137,7 +172,9 @@ export function statusReply(
               compact(value).includes(subject),
             ),
           )
-        : goals[0];
+        : (goals.find((g) => !['completed', 'cancelled'].includes(g.state)) ??
+          intake ??
+          goals[0]);
   // Unknown paraphrases remain model-resolvable; never substitute an unrelated task.
   if (!goal && !status && named) return undefined;
   if (!goal)

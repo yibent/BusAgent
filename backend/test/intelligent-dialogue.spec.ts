@@ -73,6 +73,16 @@ function fixture() {
 }
 afterEach(() => vi.restoreAllMocks());
 describe('parallel intelligent dialogue', () => {
+  it('does not call or interrupt dialogue for punctuation-only recognition', async () => {
+    const f = fixture();
+    const call = vi.spyOn(client, 'complete');
+    f.agent.handle(f.context('noise', 'intent.created', { text: '。' }));
+    await drain();
+    expect(call).not.toHaveBeenCalled();
+    expect(f.tts.cancel).not.toHaveBeenCalled();
+    expect(f.messages).toEqual([]);
+    f.agent.onModuleDestroy();
+  });
   it('delivers measured status unchanged without model rewriting or channel failures', async () => {
     const f = fixture();
     const call = vi

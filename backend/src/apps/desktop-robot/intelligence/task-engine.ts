@@ -6,6 +6,7 @@ import {
   isAcknowledgement,
   isSceneQuestion,
   statusReply,
+  hasMeaningfulInput,
   waitingMessage,
 } from './interaction-routing.js';
 import { recoveryObservation, resolveRecovery } from './local-recovery.js';
@@ -502,7 +503,7 @@ export class TaskEngine
     } else if (event.eventType === 'intent.created') {
       const input = record(event.payload).text;
       const text = typeof input === 'string' ? input.trim() : '';
-      if (!text) return;
+      if (!hasMeaningfulInput(text)) return;
       const replyTo = {
         conversation: event.correlationId,
         instruction: event.eventId,
@@ -1090,7 +1091,8 @@ export class TaskEngine
     const recordEvent = async (data: Record<string, unknown>) => {
       await this.store.change((state, emit) => {
         const current = state.goals.find((g) => g.id === goal.id);
-        if (current && data.kind === 'model') current.model_calls++;
+        if (current && ['model', 'provider_failure'].includes(String(data.kind)))
+          current.model_calls++;
         this.emit(
           emit,
           `grounding:${randomUUID()}`,
@@ -1357,7 +1359,8 @@ export class TaskEngine
       await this.store.change((state, emit) => {
         const goal = state.goals.find((g) => g.id === next.id);
         if (!goal) return;
-        if (data.kind === 'model') goal.model_calls++;
+        if (['model', 'provider_failure'].includes(String(data.kind)))
+          goal.model_calls++;
         if (typeof data.kind === 'string' && data.kind.startsWith('lookahead_'))
           goal.planning_ahead = data.kind.slice(10);
         this.emit(
@@ -1818,7 +1821,8 @@ export class TaskEngine
           await this.store.change((current, emit) => {
             const g = current.goals.find((g) => g.id === goal.id);
             if (!g) return;
-            if (data.kind === 'model') g.model_calls++;
+            if (['model', 'provider_failure'].includes(String(data.kind)))
+              g.model_calls++;
             this.emit(
               emit,
               `model:${randomUUID()}`,
@@ -1919,7 +1923,8 @@ export class TaskEngine
           // Mastra has reviewed these conclusions and explicitly retained the
           // remaining batch. Do not send the same check back every tick.
           for (const check of goal.checks ?? [])
-            if (['failed', 'uncertain'].includes(check.state)) check.state = 'superseded';
+            if (['failed', 'uncertain'].includes(check.state))
+              check.state = 'superseded';
           goal.state = 'running';
           goal.message = decision.message || '继续执行已规划的剩余步骤。';
           this.reply(emit, goal, goal.message);

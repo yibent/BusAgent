@@ -61,6 +61,23 @@ const object = (x: unknown): Record<string, unknown> =>
 export function normalizeActionParams(skill: string, raw: Record<string, unknown>) {
   if (!['grasp', 'pick_place', 'place_held'].includes(skill)) return raw;
   const params = Object.fromEntries(Object.entries(raw).filter(([, v]) => v != null));
+  for (const field of skill === 'grasp'
+    ? ['target']
+    : skill === 'place_held'
+      ? ['destination']
+      : ['target', 'destination']) {
+    const value = params[field];
+    if (
+      !(typeof value === 'string' && value.trim()) &&
+      !['label', 'ref', 'cell_ref', 'region_ref'].some(
+        (key) =>
+          typeof object(value)[key] === 'string' && String(object(value)[key]).trim(),
+      )
+    )
+      throw new Error(
+        `${skill} requires a ${field} label or reference; selection alone does not identify an object.`,
+      );
+  }
   for (const field of ['target', 'destination']) {
     const value = params[field];
     if (typeof value === 'string' && value.startsWith('obs:'))

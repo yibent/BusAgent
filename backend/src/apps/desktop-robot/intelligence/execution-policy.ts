@@ -66,6 +66,15 @@ export function retryByPolicy(
   if (!failed?.execution) return false;
   const result = object(object(failed.result).result ?? failed.result);
   const evaluation = object(result.evaluation);
+  // These failures need new inputs/evidence; replaying the same command cannot
+  // repair an ambiguous target, stale reference or missing argument.
+  if (
+    ['REFERENCE_STALE', 'TARGET_AMBIGUOUS', 'CAPABILITY_MISSING'].includes(
+      String(object(result.failure).code),
+    )
+  )
+    return false;
+  if (result.error_type === 'ValueError') return false;
   const holding =
     object(state.scene.holding).verified || object(result.holding).verified;
   if (

@@ -113,6 +113,8 @@ export function mastraModel(
       model: result.model,
       usage: result.usage,
       elapsed_ms: result.elapsed_ms,
+      tool_calls: (result.message.tool_calls ?? []).map((tool) => tool.function.name),
+      tool_call_count: result.message.tool_calls?.length ?? 0,
     });
     const content: Awaited<ReturnType<LanguageModelV2['doGenerate']>>['content'] = [];
     if (typeof result.message.content === 'string' && result.message.content)

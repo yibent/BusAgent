@@ -16,6 +16,7 @@ import {
   immediateAction,
   isAcknowledgement,
   statusReply,
+  hasMeaningfulInput,
 } from '../../apps/desktop-robot/intelligence/interaction-routing.js';
 import { emptyQueue } from '../../apps/desktop-robot/intelligence/types.js';
 import {
@@ -61,6 +62,11 @@ export class IntelligentDialogue implements OnModuleDestroy {
     const e = context.event;
     if (!['intent.created', 'intelligence.reply'].includes(e.eventType)) return;
     const p = e.payload as Record<string, unknown>;
+    if (
+      e.eventType === 'intent.created' &&
+      (typeof p.text !== 'string' || !hasMeaningfulInput(p.text))
+    )
+      return;
     const key = `${e.correlationId}:${e.eventType}:${typeof p.utterance_id === 'string' ? p.utterance_id : e.eventId}`;
     if (this.seen.has(key)) return;
     this.seen.add(key);

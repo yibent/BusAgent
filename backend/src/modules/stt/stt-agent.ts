@@ -63,7 +63,9 @@ function asBool(value: unknown, fallback: boolean): boolean {
 }
 
 function asInt(value: unknown, fallback: number): number {
-  return typeof value === 'number' && Number.isFinite(value) ? Math.trunc(value) : fallback;
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.trunc(value)
+    : fallback;
 }
 
 function joinUtteranceParts(current: string, next: string): string {
@@ -120,18 +122,25 @@ export class SttAgent implements InProcessAgent, OnModuleInit {
 
     const agentConfig =
       this.runtime.current.agents.get(STT_AGENT_ID)?.runtimeConfig.config ?? {};
-    const language = input.language ?? asString(configValue(agentConfig, 'language'), 'zh');
-    const sampleRate = input.sampleRate ?? asInt(configValue(agentConfig, 'sample_rate'), 16_000);
-    const encoding = input.encoding ?? asString(configValue(agentConfig, 'encoding'), 'pcm');
+    const language =
+      input.language ?? asString(configValue(agentConfig, 'language'), 'zh');
+    const sampleRate =
+      input.sampleRate ?? asInt(configValue(agentConfig, 'sample_rate'), 16_000);
+    const encoding =
+      input.encoding ?? asString(configValue(agentConfig, 'encoding'), 'pcm');
     const emitUncommitted =
-      input.emitUncommitted ?? asBool(configValue(agentConfig, 'emit_uncommitted'), true);
+      input.emitUncommitted ??
+      asBool(configValue(agentConfig, 'emit_uncommitted'), true);
     const endpointingMs = asInt(configValue(agentConfig, 'endpointing_ms'), 400);
     const utteranceSettleMs = asInt(
       configValue(agentConfig, 'utterance_settle_ms'),
       900,
     );
     const bargeInMinChars = asInt(configValue(agentConfig, 'barge_in_min_chars'), 3);
-    const model = asString(configValue(agentConfig, 'model'), this.hostConfig.qwenSttModel);
+    const model = asString(
+      configValue(agentConfig, 'model'),
+      this.hostConfig.qwenSttModel,
+    );
 
     const streamId = newStreamId();
     const correlationId = input.correlationId ?? newCorrelationId();
@@ -168,7 +177,12 @@ export class SttAgent implements InProcessAgent, OnModuleInit {
           onPartial: (partial) => {
             this.cancelSettleTimer(session);
             this.enqueue(session, () =>
-              this.onPartial(session, partial.text, partial.isFinal, partial.speechFinal),
+              this.onPartial(
+                session,
+                partial.text,
+                partial.isFinal,
+                partial.speechFinal,
+              ),
             );
           },
           onDone: () => {
@@ -274,10 +288,13 @@ export class SttAgent implements InProcessAgent, OnModuleInit {
   private scheduleSettledFinal(session: Session): void {
     this.cancelSettleTimer(session);
     const delay = session.forceFlush ? 0 : session.utteranceSettleMs;
-    session.settleTimer = setTimeout(() => {
-      session.settleTimer = undefined;
-      this.enqueue(session, () => this.flushPending(session));
-    }, Math.max(0, delay));
+    session.settleTimer = setTimeout(
+      () => {
+        session.settleTimer = undefined;
+        this.enqueue(session, () => this.flushPending(session));
+      },
+      Math.max(0, delay),
+    );
   }
 
   private cancelSettleTimer(session: Session): void {
@@ -298,8 +315,8 @@ export class SttAgent implements InProcessAgent, OnModuleInit {
   private async flushPending(session: Session): Promise<void> {
     if (session.closed) return;
     const text = session.pendingFinalText.trim();
-    if (text.length === 0) return;
     session.pendingFinalText = '';
+    if (!/[\p{L}\p{N}]/u.test(text)) return;
     const finalPayload = {
       stream_id: session.streamId,
       utterance_id: `${session.streamId}:${session.utteranceIndex}`,
