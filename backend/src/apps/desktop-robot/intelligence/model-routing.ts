@@ -29,7 +29,8 @@ export async function routedCompletion(
     if (failedProfiles.has(profile.id) || (needsVision && !profile.vision)) continue;
     const key = providerKey(profile);
     const health = cooling.get(key);
-    if (health && health.until > Date.now()) {
+    if (profile.cooldownEnabled === false) cooling.delete(key);
+    if (profile.cooldownEnabled !== false && health && health.until > Date.now()) {
       last = new Error(`模型 ${profile.model} 的接口暂时处于故障冷却期，请稍后重试。`);
       await record({
         kind: 'provider_cooldown',
@@ -49,10 +50,11 @@ export async function routedCompletion(
       last = error;
       failedProfiles.add(profile.id);
       const failures = (health?.failures ?? 0) + 1;
-      cooling.set(key, {
-        failures,
-        until: Date.now() + Math.min(600000, failures * 120000),
-      });
+      if (profile.cooldownEnabled !== false)
+        cooling.set(key, {
+          failures,
+          until: Date.now() + Math.min(600000, failures * 120000),
+        });
       if (cooling.size > 128) cooling.delete(cooling.keys().next().value!);
       await record({
         kind: 'provider_failure',

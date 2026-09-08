@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
@@ -6,7 +6,7 @@ import { ModelConfig } from '../src/apps/desktop-robot/intelligence/model-config
 import type { HostConfig } from '../src/config/host-config.js';
 
 describe('persistent dialogue channel selection', () => {
-  let directory: string, models: ModelConfig, token: string;
+  let directory: string, models: ModelConfig;
   beforeEach(async () => {
     directory = await mkdtemp(join(tmpdir(), 'dialogue-routing-'));
     vi.stubEnv('BUSAGENT_INTELLIGENCE_CONFIG', join(directory, 'settings.json'));
@@ -15,9 +15,7 @@ describe('persistent dialogue channel selection', () => {
     vi.stubEnv('GEMINI_PRIMARY_API_KEY', 'test-planning-key');
     vi.stubEnv('GEMINI_SECONDARY_API_KEY', 'test-planning-backup-key');
     models = new ModelConfig({} as HostConfig);
-    await expect(models.authorize('wrong')).rejects.toThrow();
-    token = await readFile(models.tokenPath, 'utf8');
-    await models.save(await models.publicSettings(), token);
+    await models.save(await models.publicSettings());
   });
   afterEach(async () => {
     vi.unstubAllEnvs();
@@ -57,7 +55,7 @@ describe('persistent dialogue channel selection', () => {
       consecutiveFailures: 3,
       exhausted: true,
     });
-    await models.save(await models.publicSettings(), token, true);
+    await models.save(await models.publicSettings(), true);
     expect((await models.dialogueAttempt()).profile.model).toBe('qwen3.8-flash');
     expect((await models.publicSettings()).dialogueRouting.consecutiveFailures).toBe(0);
   });
@@ -85,13 +83,13 @@ describe('persistent dialogue channel selection', () => {
     const draft = await models.publicSettings();
     await fail(models, 3);
     draft.images = !draft.images;
-    await models.save(draft, token);
+    await models.save(draft);
     expect((await models.dialogueAttempt()).profile.model).toBe('qwen3.7-flash');
     const next = await models.publicSettings();
     next.roles.dialogue = 'deepseek-v4-flash-0731';
     next.fallbacks.dialogue = ['qwen3-8-flash', 'qwen3-7-flash'];
     const old = await models.dialogueAttempt();
-    await models.save(next, token);
+    await models.save(next);
     await models.recordDialogueResult(old, false);
     expect((await models.dialogueAttempt()).profile.model).toBe(
       'deepseek-v4-flash-0731',
@@ -107,6 +105,6 @@ describe('persistent dialogue channel selection', () => {
     expect((await models.profilesFor('supervisor')).map((p) => p.id)).toEqual(planning);
     const settings = await models.publicSettings();
     settings.fallbacks.dialogue = ['missing'];
-    await expect(models.save(settings, token)).rejects.toThrow('备选渠道');
+    await expect(models.save(settings)).rejects.toThrow('备选渠道');
   });
 });

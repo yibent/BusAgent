@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { z } from 'zod';
@@ -19,6 +19,7 @@ export const profileSchema = z.object({
   peerGroup: z.string().min(1).optional(),
   enabled: z.boolean().default(true),
   timeoutMs: z.number().int().min(1000).max(120000).optional(),
+  cooldownEnabled: z.boolean().optional(),
 });
 export type ModelProfile = z.infer<typeof profileSchema>;
 const configSchema = z.object({
@@ -27,12 +28,23 @@ const configSchema = z.object({
     planner: z.string(),
     supervisor: z.string(),
     dialogue: z.string().optional(),
+    visual: z.string().optional(),
   }),
   fallbacks: z
     .object({
       planner: z.array(z.string()).default([]),
       supervisor: z.array(z.string()).default([]),
       dialogue: z.array(z.string()).optional(),
+      visual: z.array(z.string()).optional(),
+    })
+    .default({}),
+  nodeTimeouts: z
+    .object({
+      planner: z.number().int().min(1000).max(120000).optional(),
+      supervisor: z.number().int().min(1000).max(120000).optional(),
+      dialogue: z.number().int().min(1000).max(120000).optional(),
+      visual: z.number().int().min(1000).max(120000).optional(),
+      perception: z.number().int().min(1000).max(120000).optional(),
     })
     .default({}),
   dialogueRouting: z
@@ -53,6 +65,7 @@ const configSchema = z.object({
       toolRounds: z.number().int().min(1).max(16).default(6),
       contextBudgetTokens: z.number().int().min(6000).max(128000).optional(),
       toolResultBudgetTokens: z.number().int().min(512).max(12000).optional(),
+      providerCooldownEnabled: z.boolean().default(false),
     })
     .default({}),
   images: z.boolean().default(true),
@@ -60,6 +73,7 @@ const configSchema = z.object({
   recoveryBudget: z.number().int().min(1).max(20).default(3),
 });
 export type ModelSettings = z.infer<typeof configSchema>;
+export type ModelRole = Role | 'visual';
 export interface DialogueAttempt {
   profile: ModelProfile;
   generation: number;
@@ -91,7 +105,6 @@ export class ModelConfig {
   readonly path = resolve(
     process.env.BUSAGENT_INTELLIGENCE_CONFIG ?? '.local/intelligence.json',
   );
-  readonly tokenPath = resolve(dirname(this.path), 'admin-token');
   private cache: ModelSettings | undefined;
   private writing: Promise<unknown> = Promise.resolve();
   constructor(private readonly host: HostConfig) {}
@@ -163,6 +176,14 @@ export class ModelConfig {
     const settings = await this.settings();
     return {
       ...settings,
+      roles: {
+        ...settings.roles,
+        visual: settings.roles.visual || settings.roles.planner,
+      },
+      fallbacks: {
+        ...settings.fallbacks,
+        visual: settings.fallbacks.visual ?? settings.fallbacks.planner,
+      },
       dialogueRouting: dialogueState(settings),
       profiles: settings.profiles.map(({ apiKey, ...p }) => ({
         ...p,
@@ -170,31 +191,50 @@ export class ModelConfig {
       })),
     };
   }
-  async profile(role: Role): Promise<ModelProfile> {
+  async profile(role: ModelRole): Promise<ModelProfile> {
     const settings = await this.settings();
     if (role === 'supervisor' && !settings.supervisorEnabled)
       throw new Error('自动监督 LLM 已关闭，等待人工核验。');
-    const profile = settings.profiles.find((p) => p.id === settings.roles[role]);
+    const id =
+      role === 'visual'
+        ? settings.roles.visual || settings.roles.planner
+        : settings.roles[role];
+    const profile = settings.profiles.find((p) => p.id === id);
     if (!profile?.enabled || !profile.apiKey)
       throw new Error(`${role} 模型尚未启用或缺少 API Key，请在模型设置中配置。`);
-    return profile;
+    return {
+      ...profile,
+      timeoutMs:
+        settings.nodeTimeouts?.[role] ??
+        profile.timeoutMs ??
+        settings.performance.requestTimeoutMs,
+      cooldownEnabled: settings.performance.providerCooldownEnabled,
+    };
   }
-  async profilesFor(role: Role): Promise<ModelProfile[]> {
+  async profilesFor(role: ModelRole): Promise<ModelProfile[]> {
     const settings = await this.settings();
     const primary = await this.profile(role);
     const ids = [
       primary.id,
-      ...settings.fallbacks[role],
-      ...settings.profiles
-        .filter((p) => primary.peerGroup && p.peerGroup === primary.peerGroup)
-        .map((p) => p.id),
+      ...(role === 'visual'
+        ? (settings.fallbacks.visual ?? settings.fallbacks.planner)
+        : settings.fallbacks[role]),
     ];
     return [...new Set(ids)].flatMap((id) => {
       const p = settings.profiles.find(
         (row) => row.id === id && row.enabled && row.apiKey,
       );
       return p
-        ? [{ ...p, timeoutMs: p.timeoutMs ?? settings.performance.requestTimeoutMs }]
+        ? [
+            {
+              ...p,
+              timeoutMs:
+                settings.nodeTimeouts?.[role] ??
+                p.timeoutMs ??
+                settings.performance.requestTimeoutMs,
+              cooldownEnabled: settings.performance.providerCooldownEnabled,
+            },
+          ]
         : [];
     });
   }
@@ -205,7 +245,17 @@ export class ModelConfig {
       (p) => p.id === state.activeProfile && p.enabled && p.apiKey,
     );
     if (!profile) throw new Error('即时回答渠道未配置，请在模型设置中选择默认渠道。');
-    return { profile, generation: state.generation };
+    return {
+      profile: {
+        ...profile,
+        timeoutMs:
+          settings.nodeTimeouts?.dialogue ??
+          profile.timeoutMs ??
+          settings.performance.requestTimeoutMs,
+        cooldownEnabled: settings.performance.providerCooldownEnabled,
+      },
+      generation: state.generation,
+    };
   }
   async dialogueProfiles(): Promise<ModelProfile[]> {
     return [(await this.dialogueAttempt()).profile];
@@ -274,38 +324,41 @@ export class ModelConfig {
       return next;
     });
   }
-  async authorize(token: unknown): Promise<void> {
-    await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
-    try {
-      await writeFile(this.tokenPath, randomBytes(24).toString('hex'), {
-        flag: 'wx',
-        mode: 0o600,
-      });
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
-    }
-    const expected = Buffer.from((await readFile(this.tokenPath, 'utf8')).trim());
-    const provided = Buffer.from(typeof token === 'string' ? token : '');
-    if (expected.length !== provided.length || !timingSafeEqual(expected, provided))
-      throw new Error('模型设置需要服务器管理令牌。');
-  }
-  async save(input: unknown, token: unknown, resetDialogue = false) {
-    await this.authorize(token);
+  async save(input: unknown, resetDialogue = false, clearApiKeys: string[] = []) {
     return this.mutate(async () => {
       const next = configSchema.parse(input);
       const previous = await this.settings();
+      const clear = new Set(clearApiKeys);
+      if ([...clear].some((id) => !next.profiles.some((profile) => profile.id === id)))
+        throw new Error('要清除令牌的模型不存在。');
       if (new Set(next.profiles.map((p) => p.id)).size !== next.profiles.length)
         throw new Error('模型配置 ID 不能重复。');
       for (const p of next.profiles) {
         const url = new URL(p.baseUrl);
         if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password)
           throw new Error('模型地址必须是 HTTP(S) 服务地址。');
-        if (!p.apiKey)
+        if (clear.has(p.id)) p.apiKey = '';
+        else if (!p.apiKey)
           p.apiKey = previous.profiles.find((old) => old.id === p.id)?.apiKey ?? '';
       }
-      for (const id of Object.values(next.roles)) {
+      for (const id of Object.values(next.roles).filter(Boolean)) {
         if (!next.profiles.some((p) => p.id === id && p.enabled && p.apiKey))
           throw new Error('规划和监督角色必须选择已配置并启用的模型。');
+      }
+      for (const [role, ids] of Object.entries(next.fallbacks)) {
+        const primary = next.roles[role as keyof typeof next.roles];
+        if (
+          (ids ?? []).length !== new Set(ids ?? []).size ||
+          (ids ?? []).includes(primary ?? '')
+        )
+          throw new Error(`${role} 的主模型与回退模型不能重复。`);
+        for (const id of ids ?? [])
+          if (!next.profiles.some((p) => p.id === id && p.enabled && p.apiKey))
+            throw new Error(
+              role === 'dialogue'
+                ? '即时回答备选渠道必须已启用并配置 API 令牌。'
+                : `${role} 回退模型必须已启用并配置 API 令牌。`,
+            );
       }
       const chain = dialogueChain(next);
       if (

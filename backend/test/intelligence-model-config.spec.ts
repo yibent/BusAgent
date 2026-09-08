@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -27,26 +27,31 @@ describe('private model profiles', () => {
     vi.unstubAllEnvs();
     await rm(directory, { recursive: true, force: true });
   });
-  it('requires an admin token and preserves keys without returning them to the browser', async () => {
+  it('preserves keys without returning them to the browser', async () => {
     const publicSettings = await models.publicSettings();
     expect(JSON.stringify(publicSettings)).not.toContain('private-test-key');
-    await expect(models.save(publicSettings, 'wrong')).rejects.toThrow('管理令牌');
-    const token = await readFile(models.tokenPath, 'utf8');
-    const saved = await models.save(publicSettings, token);
+    const saved = await models.save(publicSettings);
     expect(JSON.stringify(saved)).not.toContain('private-test-key');
     expect((await models.profile('planner')).apiKey).toBe('private-test-key');
     expect((await stat(models.path)).mode & 0o777).toBe(0o600);
-    expect((await stat(models.tokenPath)).mode & 0o777).toBe(0o600);
     expect((await new ModelConfig({} as HostConfig).profile('planner')).apiKey).toBe(
       'private-test-key',
     );
+    const draft = await models.publicSettings();
+    draft.fallbacks.planner = [];
+    draft.fallbacks.supervisor = [];
+    draft.fallbacks.visual = [];
+    await models.save(draft, false, ['gemini-38-flash']);
+    expect(
+      (await models.settings()).profiles.find(
+        (profile) => profile.id === 'gemini-38-flash',
+      )?.apiKey,
+    ).toBe('');
   });
   it('persists an independently selectable dialogue profile and shares settings updates immediately', async () => {
     const settings = await models.publicSettings();
-    await expect(models.save(settings, 'wrong')).rejects.toThrow('管理令牌');
-    const token = await readFile(models.tokenPath, 'utf8');
     settings.roles.dialogue = 'qwen3-8-flash';
-    await models.save(settings, token);
+    await models.save(settings);
     expect((await models.dialogueProfiles())[0]?.id).toBe('qwen3-8-flash');
     expect((await new ModelConfig({} as HostConfig).settings()).roles.dialogue).toBe(
       'qwen3-8-flash',
@@ -120,15 +125,29 @@ describe('private model profiles', () => {
       ).reasoning_effort,
     ).toBe('high');
   });
-  it('keeps the two Gemini providers as peers when the preferred role is reversed', async () => {
+  it('uses only the explicitly ordered fallback chain and supports visual routing timeouts', async () => {
     const settings = await models.publicSettings();
-    await expect(models.save(settings, 'wrong')).rejects.toThrow();
     settings.roles.planner = 'gemini-38-flash';
-    await models.save(settings, await readFile(models.tokenPath, 'utf8'));
+    settings.fallbacks.planner = ['gemini-37-flash'];
+    settings.roles.visual = 'gemini-37-flash';
+    settings.fallbacks.visual = ['gemini-38-flash'];
+    settings.nodeTimeouts.visual = 5000;
+    settings.performance.providerCooldownEnabled = false;
+    await models.save(settings);
     expect((await models.profilesFor('planner')).map((p) => p.id)).toEqual([
       'gemini-38-flash',
       'gemini-37-flash',
     ]);
+    expect((await models.profilesFor('visual')).map((p) => p.id)).toEqual([
+      'gemini-37-flash',
+      'gemini-38-flash',
+    ]);
+    expect(
+      (await models.profilesFor('visual')).every((p) => p.timeoutMs === 5000),
+    ).toBe(true);
+    expect(
+      (await models.profilesFor('visual')).every((p) => p.cooldownEnabled === false),
+    ).toBe(true);
     expect((await models.dialogueProfiles()).map((p) => p.id)).toEqual([
       'qwen3-8-flash',
     ]);
@@ -174,13 +193,11 @@ describe('private model profiles', () => {
     expect(sent.messages[0]).toEqual(message);
   });
   it('disables DeepSeek reasoning for immediate dialogue without using Qwen parameters', async () => {
-    const request = vi
-      .fn()
-      .mockResolvedValue(
-        Response.json({
-          choices: [{ message: { role: 'assistant', content: '你好' } }],
-        }),
-      );
+    const request = vi.fn().mockResolvedValue(
+      Response.json({
+        choices: [{ message: { role: 'assistant', content: '你好' } }],
+      }),
+    );
     vi.stubGlobal('fetch', request);
     const profile = (await models.settings()).profiles.find(
       (p) => p.provider === 'deepseek',

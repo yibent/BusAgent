@@ -349,11 +349,13 @@ describe('durable goal execution', () => {
       images: true,
       supervisorEnabled: true,
       recoveryBudget: 3,
+      nodeTimeouts: {},
       performance: {
         lookahead: true,
         requestTimeoutMs: 20000,
         planningBudgetMs: 60000,
         toolRounds: 6,
+        providerCooldownEnabled: true,
       },
     });
     vi.spyOn(engine, 'live').mockResolvedValue({

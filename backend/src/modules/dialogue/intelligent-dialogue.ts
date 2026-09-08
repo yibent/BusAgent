@@ -189,7 +189,7 @@ export class IntelligentDialogue implements OnModuleDestroy {
         attempt = await this.models.dialogueAttempt();
         markExecutionLoop('slow', attempt.profile.model);
         const answer = await complete(
-          { ...attempt.profile, thinking: false, timeoutMs: isAck ? 2200 : 4500 },
+          { ...attempt.profile, thinking: false },
           messages,
           [],
           deadline,

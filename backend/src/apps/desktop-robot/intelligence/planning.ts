@@ -375,6 +375,7 @@ export interface PlanningContext {
   readObservation?(id: string, signal: AbortSignal): Promise<Record<string, unknown>>;
   images: boolean;
   fallbackProfiles?: ModelProfile[];
+  visualProfiles?: ModelProfile[];
   toolRounds?: number;
   ahead?: Record<string, unknown>;
 }
@@ -616,7 +617,7 @@ export async function planGoal(
       let selected;
       try {
         selected = await selectImageObject(
-          [profile, ...(context.fallbackProfiles ?? [])],
+          context.visualProfiles ?? [profile, ...(context.fallbackProfiles ?? [])],
           frame.bytes,
           String(args.description),
           signal,
@@ -637,7 +638,7 @@ export async function planGoal(
         camera = alternate;
         frame = await context.readImage(camera);
         selected = await selectImageObject(
-          [profile, ...(context.fallbackProfiles ?? [])],
+          context.visualProfiles ?? [profile, ...(context.fallbackProfiles ?? [])],
           frame.bytes,
           String(args.description),
           signal,
@@ -776,7 +777,7 @@ export async function planGoal(
           : undefined;
       // A narrow visual call receives the pixels once. Neither Mastra memory nor the Bus stores image bytes.
       const answer = await routedCompletion(
-        [profile, ...(context.fallbackProfiles ?? [])],
+        context.visualProfiles ?? [profile, ...(context.fallbackProfiles ?? [])],
         [
           {
             role: 'system',

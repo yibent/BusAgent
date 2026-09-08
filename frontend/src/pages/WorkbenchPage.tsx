@@ -1,4 +1,7 @@
-import { IntelligencePanel } from "@/components/workbench/IntelligencePanel";
+import {
+  IntelligencePanel,
+  type SettingsPage,
+} from "@/components/workbench/IntelligencePanel";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Boxes,
@@ -60,9 +63,9 @@ export function WorkbenchPage() {
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(
     null,
   );
-  const [intelligencePage, setIntelligencePage] = useState<
-    "tasks" | "models" | null
-  >(null);
+  const [intelligencePage, setIntelligencePage] = useState<SettingsPage | null>(
+    null,
+  );
   const [help, setHelp] = useState(false);
   const [layoutVersion, setLayoutVersion] = useState(0);
   const [queuePaused, setQueuePaused] = useState<boolean | null>(null);
@@ -356,31 +359,24 @@ export function WorkbenchPage() {
             </Tip>
           </nav>
           <div className="header-right">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setIntelligencePage("tasks")}
-            >
-              {queuePaused ? "任务队列 · 已暂停" : "任务队列"}
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setIntelligencePage("models")}
-            >
-              模型设置
-            </Button>
             <span className="connection-status">
               <i className={`dot ${robot.connected ? "fast" : ""}`} />
               {robot.connected ? "仿真已连接" : "连接中"}
             </span>
             <span className="header-divider" />
-            <Tip label="恢复默认面板布局">
+            <Tip
+              label={
+                queuePaused ? "系统设置 · 任务队列已暂停" : "系统设置与任务队列"
+              }
+            >
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={() => setLayoutVersion((v) => v + 1)}
-                aria-label="恢复面板布局"
+                className={
+                  queuePaused ? "settings-trigger paused" : "settings-trigger"
+                }
+                onClick={() => setIntelligencePage("tasks")}
+                aria-label="打开系统设置"
               >
                 <Settings2 />
               </Button>
@@ -442,7 +438,9 @@ export function WorkbenchPage() {
         )}
         <IntelligencePanel
           page={intelligencePage}
+          onPageChange={setIntelligencePage}
           onClose={() => setIntelligencePage(null)}
+          onResetLayout={() => setLayoutVersion((version) => version + 1)}
         />
         <Dialog
           open={!!confirmation || transitioning || submittingTransition}

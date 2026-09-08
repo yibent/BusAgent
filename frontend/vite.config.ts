@@ -18,12 +18,15 @@ export default defineConfig({
       "/v1/stt": {
         target: backendTarget,
         ws: true,
+        changeOrigin: true,
       },
       "/api": {
         target: process.env.ARENA_PROXY_TARGET ?? "http://localhost:7861",
+        changeOrigin: true,
       },
       "/v1": {
         target: backendTarget,
+        changeOrigin: true,
       },
     },
   },

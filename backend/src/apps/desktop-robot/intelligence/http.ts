@@ -89,21 +89,23 @@ export function intelligenceRoutes(
     route((request) => {
       const body = request.body as {
         settings: unknown;
-        token: unknown;
         resetDialogue?: boolean;
+        clearApiKeys?: string[];
       };
-      return models.save(body.settings, body.token, body.resetDialogue === true);
+      return models.save(
+        body.settings,
+        body.resetDialogue === true,
+        body.clearApiKeys ?? [],
+      );
     }),
   );
   app.post(
     '/v1/model-config/test',
     route(async (request) => {
       const body = request.body as {
-        token: unknown;
         profile: string;
         vision?: boolean;
       };
-      await models.authorize(body.token);
       const settings = await models.settings();
       const profile = settings.profiles.find((p) => p.id === body.profile);
       if (!profile?.apiKey) throw new Error('模型缺少 API Key。');

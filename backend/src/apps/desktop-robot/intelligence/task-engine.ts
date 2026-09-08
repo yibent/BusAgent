@@ -1100,6 +1100,7 @@ export class TaskEngine
     step: QueueStep,
     signal: AbortSignal,
   ): Promise<boolean> {
+    const settings = await this.models.settings();
     const recordEvent = async (data: Record<string, unknown>) => {
       await this.store.change((state, emit) => {
         const current = state.goals.find((g) => g.id === goal.id);
@@ -1124,7 +1125,10 @@ export class TaskEngine
               this.base(),
               params,
               goal.conversation_id,
-              AbortSignal.any([signal, AbortSignal.timeout(15000)]),
+              AbortSignal.any([
+                signal,
+                AbortSignal.timeout(settings.nodeTimeouts?.perception ?? 15000),
+              ]),
             ),
         );
       const remembered = record((await this.live()).world).objects;
@@ -1133,11 +1137,10 @@ export class TaskEngine
         observe,
         (label, field) =>
           observeOperation(recordEvent, 'visual_fallback', async () => {
-            const settings = await this.models.settings();
             if (!settings.images)
               throw new Error(`当前视觉未找到 ${label}，图像语义回退已关闭。`);
             const profiles = this.models.profilesFor
-              ? await this.models.profilesFor('planner')
+              ? await this.models.profilesFor('visual')
               : [await this.models.profile('planner')];
             signal.throwIfAborted();
             const frame = await this.image('scene');
@@ -1690,6 +1693,9 @@ export class TaskEngine
     const profiles = this.models.profilesFor
       ? await this.models.profilesFor(role)
       : [await this.models.profile(role)];
+    const visualProfiles = this.models.profilesFor
+      ? await this.models.profilesFor('visual')
+      : profiles;
     const profile = profiles[0]!;
     signal = AbortSignal.any([
       signal,
@@ -1739,6 +1745,7 @@ export class TaskEngine
             }
           : {}),
         fallbackProfiles: profiles.slice(1),
+        visualProfiles,
         toolRounds: settings.performance?.toolRounds ?? 6,
         manageQueue: async (action, id, instruction) => {
           if (id === goal.id)
@@ -1827,7 +1834,15 @@ export class TaskEngine
         },
         readImage: (camera, observationRef) => this.image(camera, observationRef),
         observe: (params, signal) =>
-          observeScene(this.base(), params, goal.conversation_id, signal),
+          observeScene(
+            this.base(),
+            params,
+            goal.conversation_id,
+            AbortSignal.any([
+              signal,
+              AbortSignal.timeout(settings.nodeTimeouts?.perception ?? 15000),
+            ]),
+          ),
         readObservation: (id, signal) => readObservation(this.base(), id, signal),
         record: async (data) => {
           await this.store.change((current, emit) => {

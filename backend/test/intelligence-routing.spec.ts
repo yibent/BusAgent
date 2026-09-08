@@ -192,3 +192,35 @@ it('shares provider cooldown across requests and probes it again after expiry', 
   await request();
   expect((call.mock.calls.at(-1)![0] as ModelProfile).id).toBe('plus');
 });
+it('can disable provider cooldown and probe the preferred channel on every request', async () => {
+  const call = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('timeout'))
+    .mockResolvedValue(answer);
+  const record = vi.fn();
+  const preferred = { ...primary, cooldownEnabled: false };
+  await routedCompletion(
+    [preferred, backup],
+    [],
+    [],
+    new AbortController().signal,
+    record,
+    call,
+  );
+  await routedCompletion(
+    [preferred, backup],
+    [],
+    [],
+    new AbortController().signal,
+    record,
+    call,
+  );
+  expect(call.mock.calls.map((entry) => (entry[0] as ModelProfile).id)).toEqual([
+    'plus',
+    'max',
+    'plus',
+  ]);
+  expect(record).not.toHaveBeenCalledWith(
+    expect.objectContaining({ kind: 'provider_cooldown' }),
+  );
+});
