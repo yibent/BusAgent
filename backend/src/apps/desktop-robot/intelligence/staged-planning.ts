@@ -28,6 +28,18 @@ export type TaskRoute = z.infer<typeof taskRouteSchema>;
 
 function validatedTaskRoute(value: unknown) {
   const route = taskRouteSchema.parse(value);
+  const contactRelation = route.actions.some((action) =>
+    ['insert', 'sleeve_on_peg', 'hang'].includes(String(action.params.relation)),
+  );
+  if (route.disposition === 'simple' && contactRelation)
+    return taskRouteSchema.parse({
+      ...route,
+      disposition: 'complex',
+      requirement:
+        route.requirement ||
+        `${route.summary}。接触关系需要读取当前场景图像，框选目标和工装后生成一个完整阶段。`,
+      actions: [],
+    });
   if (route.disposition === 'simple' && !route.actions.length)
     throw new Error('快速任务模型将任务判为simple，但没有提交动作。');
   if (route.disposition !== 'simple' && route.actions.length)
@@ -178,7 +190,7 @@ export async function routeTask(
 disposition=no_action：闲聊、知识问答、寒暄、确认语，以及不需要系统取证的对话；系统不会创建任务列表。
 disposition=query：需要读取机器人状态、任务历史或当前场景；不要生成动作。
 disposition=simple：目标和目的地明确、无需中途新证据即可完成的有限机器人任务。必须一次给出完整actions；普通抓放优先一个pick_place。execution.loop可选fast_only、fast_then_slow、slow，默认fast_then_slow。不要读图，目标使用用户给出的具体英文开放词汇标签。
-disposition=complex：需要识别数量/区域/姿态、阶段依赖、中途观察、整理、装箱或开放式决策。只生成精确requirement，交给高级任务模型。
+disposition=complex：需要识别数量/区域/姿态、阶段依赖、中途观察、整理、装箱或开放式决策。insert、sleeve_on_peg、hang接触任务始终属于complex，需要高级模型随当前图像框选目标和工装。只生成精确requirement，交给高级任务模型。
 disposition=modify：用户明确修改、追加、取消或纠正已有任务列表；必须从active_lists选择target_goal_id，并在requirement中说明修改。模糊指代但存在唯一活动列表时可绑定；多个候选且无法判断则作为query。
 “对、好、可以、继续说”等确认不是新任务。不要从历史复制动作。actions只允许控制器技能；一抓一放尽量使用pick_place。`,
       },

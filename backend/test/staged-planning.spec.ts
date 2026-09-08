@@ -122,6 +122,42 @@ describe('staged task architecture', () => {
     expect(request).toHaveBeenCalledTimes(1);
   });
 
+  it('upgrades contact placement to one image-grounded advanced plan', async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce(
+        toolResponse('submit_task_route', {
+          disposition: 'simple', summary: '套入轴套', completion: '轴套位于定位销上',
+          requirement: '',
+          actions: [{ title: '套柱', skill: 'pick_place',
+            params: { target: 'cyan sleeve', destination: 'peg fixture', relation: 'sleeve_on_peg' } }],
+        }),
+      )
+      .mockResolvedValueOnce(
+        toolResponse('submit_plan', {
+          outcome: 'continue', actions: [{ title: '套柱', skill: 'pick_place',
+            params: { target: 'cyan sleeve', destination: 'peg fixture', relation: 'sleeve_on_peg' },
+            stage: { id: 'sleeve', number: 1, title: '套柱', depends_on: [],
+              expected_state: '青色轴套套在定位销上' } }],
+        }),
+      );
+    vi.stubGlobal('fetch', request);
+    const image = vi.fn().mockResolvedValue({ bytes: Buffer.from('image'),
+      metadata: { snapshot_ref: 'a'.repeat(32), camera: 'scene' } });
+    const result = await runStagedPlanning(
+      { settings, taskProfiles: [profile()],
+        plannerProfiles: [profile({ id: 'advanced', vision: true, boxGrounding: true })],
+        goal: goal(), queue: emptyQueue(),
+        live: { capabilities: { placement: { relations: ['sleeve_on_peg'] } }, holding: {} },
+        readImage: image, observeScene: vi.fn(), record: vi.fn().mockResolvedValue(undefined) },
+      AbortSignal.timeout(3000),
+    );
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(image).toHaveBeenCalledOnce();
+    expect(result.mode).toBe('complex');
+    expect(result.actions[0]?.params.relation).toBe('sleeve_on_peg');
+  });
+
   it('sends a frozen image only to a box-capable advanced model', async () => {
     const request = vi
       .fn()
