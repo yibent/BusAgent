@@ -521,7 +521,7 @@ export async function planGoal(
     const observed = await context.observe(
       {
         scope: 'scene',
-        scene_mode: 'caption',
+        scene_mode: 'auto',
         cameras: ['scene_camera'],
       },
       signal,
