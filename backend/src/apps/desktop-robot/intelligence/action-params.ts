@@ -22,6 +22,11 @@ const selector = {
           type: 'string',
           enum: ['nearest', 'left', 'right', 'near', 'far', 'center', 'compact'],
         },
+        relation: {
+          type: 'string',
+          enum: ['on', 'inside', 'insert', 'sleeve_on_peg', 'hang'],
+          description: '接触关系由AnyPlace姿态与Panda接触轨迹执行。',
+        },
         grounding: {
           type: 'object',
           additionalProperties: false,
@@ -56,7 +61,10 @@ export const actionParamsJsonSchema = {
     target: selector,
     destination: selector,
     mode: { type: 'string', enum: ['auto', 'basic', 'enhanced'] },
-    relation: { type: 'string', enum: ['on', 'inside'] },
+    relation: {
+      type: 'string',
+      enum: ['on', 'inside', 'insert', 'sleeve_on_peg', 'hang'],
+    },
     unfamiliar: { type: 'boolean' },
     cluttered: { type: 'boolean' },
     precise: { type: 'boolean' },

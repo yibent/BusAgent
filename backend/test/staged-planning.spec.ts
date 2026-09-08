@@ -209,6 +209,39 @@ describe('staged task architecture', () => {
     });
   });
 
+  it('turns repeated free-space destinations into a compact packing group', async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce(
+        toolResponse('submit_task_route', {
+          disposition: 'complex', summary: '整理桌面', completion: '零件装盘',
+          requirement: '把两个零件放入同一周转盘', actions: [],
+        }),
+      )
+      .mockResolvedValueOnce(
+        toolResponse('submit_plan', {
+          outcome: 'continue',
+          actions: ['cylinder', 'block'].map((target, index) => ({
+            title: `放置${target}`, skill: 'pick_place',
+            params: { target, destination: { label: 'green tray', selection: 'free_space' } },
+            stage: { id: `stage-${index + 1}`, number: index + 1, title: '装盘',
+              depends_on: [], expected_state: `${target}位于绿色周转盘内` },
+          })),
+        }),
+      );
+    vi.stubGlobal('fetch', request);
+    const result = await runStagedPlanning(
+      { settings, taskProfiles: [profile()], plannerProfiles: [profile()], goal: goal(),
+        queue: emptyQueue(), live: { capabilities: { skills: ['pick_place'] }, holding: {} },
+        readImage: vi.fn(), observeScene: vi.fn().mockResolvedValue({ vision: { views: [] } }),
+        record: vi.fn().mockResolvedValue(undefined) },
+      AbortSignal.timeout(3000),
+    );
+    expect(result.actions).toHaveLength(2);
+    expect(result.actions.every((action) =>
+      (action.params.destination as { preference?: string }).preference === 'compact')).toBe(true);
+  });
+
   it('uses local YOLOE/SAM3/Florence evidence for a non-visual advanced model', async () => {
     const request = vi
       .fn()

@@ -43,6 +43,20 @@ describe('planner to execution parameter contract', () => {
       orientation: { axis_ref: ref, endpoint: 0, direction: 'up' },
     });
   });
+  it('preserves AnyPlace contact relations from either supported spelling', () => {
+    expect(
+      parse(
+        { target: 'metal pin', destination: { label: 'socket', relation: 'insert' } },
+        'pick_place',
+      ).params,
+    ).toMatchObject({ relation: 'insert', destination: { label: 'socket' } });
+    expect(
+      parse(
+        { destination: 'hook fixture', relation: 'hang' },
+        'place_held',
+      ).params.relation,
+    ).toBe('hang');
+  });
   it('does not silently execute after dropping incomplete or conflicting orientation', () => {
     expect(() => parse({ target: ref, orientation_axis_ref: ref })).toThrow(
       '完整 orientation',

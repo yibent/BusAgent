@@ -207,9 +207,39 @@ function advancedSystem(profile: ModelProfile) {
 每个用户完整任务对应一个编号列表。一抓一放是一个stage；优先用一个pick_place表达。每个stage必须填写唯一id、连续number、depends_on和expected_state。expected_state必须是区域内可观察的自然语言状态，例如“金属圆柱直立在蓝色料箱格位内”。
 列表number已经规定物理执行顺序，不能因为先后顺序就建立依赖。depends_on默认[]；只有后续阶段的目标、目的地或完成条件必须依靠前一阶段的成功结果时才填写依赖。没有依赖的阶段允许连续执行，其Florence检查异步运行；如果后续阶段确实依赖本阶段，当前动作execution.supervision.wait=true。每个抓放阶段设置Florence局部检查，提供target_label、region_label、predicate；能可靠给出目标区域框时再提供box_2d。
 execution.loop只能为fast_only、fast_then_slow、slow。普通可见物体用fast_then_slow；陌生、杂乱或精确姿态可直接slow。识别链固定为YOLOE→SAM3→Florence，成功后由SAM2/光流持续跟踪。
-目标和目的地可以使用具体开放词汇label或实际ref。不要输出配置资产名。空盘/桌面插空使用selection=free_space。框坐标为[ymin,xmin,ymax,xmax]、0..1000，必须绑定当前snapshot_ref和camera。严格服从live.capabilities.skills：当前只有普通抓放时，只能规划支撑面on或敞口容器inside；不得把圆环套到立柱、把销插入孔、悬挂到挂钩，也不得把治具立柱误称为料箱。只有控制器明确提供对应插入/悬挂技能时才能规划这些关系。
+目标和目的地可以使用具体开放词汇label或实际ref。不要输出配置资产名。空盘/桌面插空使用selection=free_space；多个物体进入同一敞口容器时系统会自动形成紧凑装盘组，每次放置后重观测剩余空位。框坐标为[ymin,xmin,ymax,xmax]、0..1000，必须绑定当前snapshot_ref和camera。严格服从live.capabilities.placement.relations：on/inside是普通支撑放置；insert、sleeve_on_peg、hang只有在该列表明确出现时才可规划，并分别表达销入孔、轴套套柱、物体悬挂。接触关系必须用pick_place或place_held的relation参数且placement走AnyPlace，不得把治具立柱误称为料箱。
 ${grounding ? '本模型已启用原生框选能力：对需要明确选择的目标可输出grounding={snapshot_ref,camera,box_2d}。' : '本模型没有启用原生框选能力：禁止猜测box_2d或grounding；仅输出具体label/ref，系统使用YOLOE、SAM3和最终Florence定位。'}
 任务修改时保留已完成和运行中阶段，用queue_update=replace_pending替换未执行部分；系统已经绑定目标列表，无需在提交参数中重复列表编号。计划结束后由独立高级复核模型验收，因此final_review=true。`;
+}
+
+function normalizePacking(actions: Decision['actions']) {
+  // A shared open destination is one packing problem, not a set of unrelated
+  // nearest-point placements. Keep every stage independently re-observed so
+  // newly placed parts become obstacles while selecting the tightest valid
+  // patch for the whole group.
+  const packingGroups = new Map<string, Decision['actions']>();
+  for (const action of actions) {
+    if (!['pick_place', 'place_held'].includes(action.skill)) continue;
+    const destination = action.params.destination;
+    if (!destination || typeof destination !== 'object' || Array.isArray(destination))
+      continue;
+    const row = destination as Record<string, unknown>;
+    if (row.cell_ref || row.selection !== 'free_space') continue;
+    const identity = String(row.ref ?? row.label ?? '');
+    if (!identity) continue;
+    const group = packingGroups.get(identity) ?? [];
+    group.push(action);
+    packingGroups.set(identity, group);
+  }
+  for (const group of packingGroups.values()) {
+    if (group.length < 2) continue;
+    for (const action of group) {
+      const destination = action.params.destination as Record<string, unknown>;
+      if (!destination.preference || ['nearest', 'any'].includes(String(destination.preference)))
+        destination.preference = 'compact';
+    }
+  }
+  return actions;
 }
 
 function normalizeStages(decision: Decision, retryLimit: number, existing?: Goal) {
@@ -250,6 +280,7 @@ function normalizeStages(decision: Decision, retryLimit: number, existing?: Goal
   const depended = new Set(
     decision.actions.flatMap((action) => action.stage?.depends_on ?? []),
   );
+  normalizePacking(decision.actions);
   for (const action of decision.actions) {
     if (!action.stage || !['grasp', 'pick_place', 'place_held'].includes(action.skill))
       continue;
@@ -553,6 +584,7 @@ export async function runStagedPlanning(
           action.execution.max_attempts ??=
             context.settings.architecture?.stageRetryLimit ?? 2;
         }
+      if (route.disposition === 'simple') normalizePacking(route.actions);
       if (route.disposition === 'simple')
         return decisionSchema.parse({
           mode: 'simple',
