@@ -421,6 +421,10 @@ async function advancedPlan(
         advanced_requirement: route.requirement,
         architecture: 'staged',
       });
+      // A model may use "complete" to mean that its plan is complete.  Queue
+      // semantics are stricter: physical completion is impossible while new
+      // actions still need dispatching.
+      if (parsed.actions.length) parsed.outcome = 'continue';
       if (parsed.outcome === 'continue' && !parsed.actions.length)
         throw new Error('高级任务模型没有提交可执行阶段。');
       return parsed.actions.length

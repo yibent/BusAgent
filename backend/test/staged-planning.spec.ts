@@ -135,7 +135,7 @@ describe('staged task architecture', () => {
       )
       .mockResolvedValueOnce(
         toolResponse('submit_plan', {
-          outcome: 'continue', actions: [{ title: '套柱', skill: 'pick_place',
+          outcome: 'complete', actions: [{ title: '套柱', skill: 'pick_place',
             params: { target: 'cyan sleeve', destination: 'peg fixture', relation: 'sleeve_on_peg' },
             stage: { id: 'sleeve', number: 1, title: '套柱', depends_on: [],
               expected_state: '青色轴套套在定位销上' } }],
@@ -155,6 +155,7 @@ describe('staged task architecture', () => {
     expect(request).toHaveBeenCalledTimes(2);
     expect(image).toHaveBeenCalledOnce();
     expect(result.mode).toBe('complex');
+    expect(result.outcome).toBe('continue');
     expect(result.actions[0]?.params.relation).toBe('sleeve_on_peg');
   });
 
