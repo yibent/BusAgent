@@ -15,6 +15,7 @@ import { Logger } from '../../common/logger.js';
 import {
   immediateAction,
   isAcknowledgement,
+  isSceneQuestion,
   statusReply,
   hasMeaningfulInput,
 } from '../../apps/desktop-robot/intelligence/interaction-routing.js';
@@ -132,6 +133,8 @@ export class IntelligentDialogue implements OnModuleDestroy {
       p = e.payload as Record<string, unknown>;
     const isAck = job.phase === 'acknowledgement';
     const verbatim = !isAck && p.verbatim === true && typeof p.text === 'string';
+    const fixedSceneAck =
+      isAck && typeof p.text === 'string' && isSceneQuestion(p.text);
     const valid = () =>
       !job.controller.signal.aborted &&
       (p.interaction !== true ||
@@ -143,7 +146,7 @@ export class IntelligentDialogue implements OnModuleDestroy {
     const started = Date.now();
     let shared: unknown;
     try {
-      if (!verbatim)
+      if (!verbatim && !fixedSceneAck)
         shared = await this.memory.view(e.correlationId, isAck ? 2400 : 4200);
     } catch (error) {
       shared = { unavailable: true };
@@ -169,7 +172,11 @@ export class IntelligentDialogue implements OnModuleDestroy {
         }),
       },
     ];
-    let text = verbatim ? (p.text as string) : '';
+    let text = verbatim
+      ? (p.text as string)
+      : fixedSceneAck
+        ? '我看一下当前画面。'
+        : '';
     const deadline = AbortSignal.any([
       job.controller.signal,
       AbortSignal.timeout(isAck ? 3500 : 6500),
@@ -178,7 +185,7 @@ export class IntelligentDialogue implements OnModuleDestroy {
     let responseModel = '';
     let channelSwitchedTo = '';
     try {
-      if (!verbatim) {
+      if (!verbatim && !fixedSceneAck) {
         attempt = await this.models.dialogueAttempt();
         markExecutionLoop('slow', attempt.profile.model);
         const answer = await complete(

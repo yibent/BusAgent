@@ -73,6 +73,19 @@ function fixture() {
 }
 afterEach(() => vi.restoreAllMocks());
 describe('parallel intelligent dialogue', () => {
+  it('acknowledges a direct scene observation locally without a dialogue model call', async () => {
+    const f = fixture();
+    const call = vi.spyOn(client, 'complete');
+    f.agent.handle(
+      f.context('scene', 'intent.created', { text: '嗯。现在可以看到什么呢？' }),
+    );
+    await drain();
+    expect(call).not.toHaveBeenCalled();
+    expect(f.messages.find((m) => m.type === 'reply.final')?.text).toBe(
+      '我看一下当前画面。',
+    );
+    f.agent.onModuleDestroy();
+  });
   it('does not call or interrupt dialogue for punctuation-only recognition', async () => {
     const f = fixture();
     const call = vi.spyOn(client, 'complete');
