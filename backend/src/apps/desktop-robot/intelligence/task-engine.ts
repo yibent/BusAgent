@@ -2179,6 +2179,7 @@ export class TaskEngine
         goal.advanced_requirement = decision.advanced_requirement;
       goal.list_number ??=
         Math.max(0, ...state.goals.map((item) => item.list_number ?? 0)) + 1;
+      goal.initial_mode ??= decision.mode;
       goal.mode =
         goal.mode === 'complex' || decision.mode === 'complex' ? 'complex' : 'simple';
       goal.plan_scope =

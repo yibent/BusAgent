@@ -4,7 +4,11 @@ import type {
   ModelProfile,
   ModelSettings,
 } from '../src/apps/desktop-robot/intelligence/model-config.js';
-import { runStagedPlanning } from '../src/apps/desktop-robot/intelligence/staged-planning.js';
+import {
+  continueStagedPlanning,
+  reviewStagedPlanning,
+  runStagedPlanning,
+} from '../src/apps/desktop-robot/intelligence/staged-planning.js';
 
 const profile = (fields: Partial<ModelProfile> = {}): ModelProfile => ({
   id: 'test',
@@ -269,5 +273,140 @@ describe('staged task architecture', () => {
     expect(JSON.stringify(sentBody(request, 1).messages)).toContain(
       'gear beside parts tray',
     );
+  });
+
+  it('continues numbering after retained completed stages and accepts their dependencies', async () => {
+    const current = goal();
+    current.interaction = false;
+    current.architecture = 'staged';
+    current.mode = 'complex';
+    current.initial_mode = 'simple';
+    current.steps = [
+      {
+        id: 'completed-step',
+        task_id: 'completed-task',
+        command_id: 'completed-command',
+        title: '完成第一阶段',
+        skill: 'pick_place',
+        params: { target: 'first part', destination: 'tray' },
+        review_after: false,
+        state: 'completed',
+        attempt: 1,
+        stage: {
+          id: 'stage-1',
+          number: 1,
+          title: '第一阶段',
+          depends_on: [],
+          expected_state: '第一个零件位于托盘内',
+        },
+      },
+    ];
+    const request = vi.fn().mockResolvedValue(
+      toolResponse('submit_plan', {
+        outcome: 'continue',
+        actions: [
+          {
+            title: '继续第二阶段',
+            skill: 'pick_place',
+            params: { target: 'second part', destination: 'tray' },
+            stage: {
+              id: 'stage-2',
+              number: 9,
+              title: '第二阶段',
+              depends_on: ['stage-1'],
+              expected_state: '第二个零件位于托盘内',
+            },
+          },
+        ],
+      }),
+    );
+    vi.stubGlobal('fetch', request);
+    const result = await continueStagedPlanning(
+      {
+        settings,
+        taskProfiles: [profile()],
+        plannerProfiles: [profile({ id: 'advanced' })],
+        goal: current,
+        queue: { ...emptyQueue(), goals: [current] },
+        live: { capabilities: { skills: ['pick_place'] }, holding: {} },
+        readImage: vi.fn(),
+        observeScene: vi.fn().mockResolvedValue({ vision: { views: [] } }),
+        record: vi.fn().mockResolvedValue(undefined),
+      },
+      AbortSignal.timeout(3000),
+    );
+    expect(result.actions[0]?.stage).toMatchObject({
+      id: 'stage-2',
+      number: 2,
+      depends_on: ['stage-1'],
+    });
+  });
+
+  it('does not let final review repeat a physically completed simple transfer', async () => {
+    const current = goal();
+    current.interaction = false;
+    current.architecture = 'staged';
+    current.mode = 'complex';
+    current.initial_mode = 'simple';
+    current.steps = [
+      {
+        id: 'completed-step',
+        task_id: 'completed-task',
+        command_id: 'completed-command',
+        title: '放置垫圈',
+        skill: 'pick_place',
+        params: { target: 'washer', destination: 'table' },
+        review_after: false,
+        state: 'completed',
+        attempt: 1,
+        result: {
+          result: {
+            ok: true,
+            evaluation: { physical_success: true, released: true },
+            holding: { verified: false },
+          },
+        },
+      },
+    ];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        toolResponse('submit_review', {
+          verdict: 'repair',
+          reason: '画面没有重新找到原位置的垫圈',
+          evidence_refs: [],
+          actions: [
+            {
+              title: '重复抓取垫圈',
+              skill: 'pick_place',
+              params: { target: 'washer', destination: 'table' },
+              stage: {
+                id: 'repeat-stage',
+                number: 1,
+                title: '重复阶段',
+                depends_on: [],
+                expected_state: '垫圈位于桌面',
+              },
+            },
+          ],
+        }),
+      ),
+    );
+    const result = await reviewStagedPlanning(
+      {
+        settings,
+        taskProfiles: [profile()],
+        plannerProfiles: [profile()],
+        goal: current,
+        queue: { ...emptyQueue(), goals: [current] },
+        live: { holding: { verified: false }, capabilities: { skills: [] } },
+        readImage: vi.fn(),
+        observeScene: vi.fn().mockResolvedValue({ vision: { views: [] } }),
+        record: vi.fn().mockResolvedValue(undefined),
+      },
+      [profile({ id: 'reviewer' })],
+      AbortSignal.timeout(3000),
+    );
+    expect(result).toMatchObject({ outcome: 'complete', actions: [] });
   });
 });

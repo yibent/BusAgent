@@ -135,6 +135,7 @@ export interface Goal {
   source: string;
   state: GoalState;
   mode: 'simple' | 'complex';
+  initial_mode?: 'simple' | 'complex';
   summary: string;
   completion: string;
   steps: QueueStep[];

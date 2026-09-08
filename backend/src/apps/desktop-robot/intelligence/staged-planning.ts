@@ -13,6 +13,7 @@ import {
 } from './types.js';
 import { localSceneReply, roleTools } from './planning.js';
 import { planningEvidence, planningGoal } from './planning-context.js';
+import { physicalVerdict } from './execution-policy.js';
 
 export const taskRouteSchema = z.object({
   disposition: z.enum(['no_action', 'query', 'simple', 'complex', 'modify']),
@@ -211,17 +212,40 @@ ${grounding ? '本模型已启用原生框选能力：对需要明确选择的�
 任务修改时保留已完成和运行中阶段，用queue_update=replace_pending替换未执行部分；系统已经绑定目标列表，无需在提交参数中重复列表编号。计划结束后由独立高级复核模型验收，因此final_review=true。`;
 }
 
-function normalizeStages(decision: Decision, retryLimit: number) {
-  const ids = new Set<string>();
+function normalizeStages(decision: Decision, retryLimit: number, existing?: Goal) {
+  const retained =
+    existing?.steps.filter(
+      (step) =>
+        step.stage &&
+        (step.state === 'completed' ||
+          ['dispatching', 'running', 'unknown'].includes(step.state)),
+    ) ?? [];
+  const retainedIds = new Set(
+    retained.flatMap((step) => (step.stage ? [step.stage.id] : [])),
+  );
+  const baseNumber = Math.max(0, ...retained.map((step) => step.stage?.number ?? 0));
+  const renamed = new Map<string, string>();
+  const originals = new Set<string>();
   for (const [index, action] of decision.actions.entries()) {
     if (!action.stage) throw new Error(`高级计划第${index + 1}个动作缺少stage。`);
-    if (action.stage.number !== index + 1)
-      throw new Error('高级计划的stage编号必须从1连续排列。');
-    if (ids.has(action.stage.id)) throw new Error('高级计划的stage id不能重复。');
-    for (const dependency of action.stage.depends_on)
+    if (originals.has(action.stage.id)) throw new Error('高级计划的stage id不能重复。');
+    originals.add(action.stage.id);
+    const original = action.stage.id;
+    action.stage.number = baseNumber + index + 1;
+    if (retainedIds.has(original))
+      action.stage.id = `${original}-r${existing?.revision ?? 1}-${action.stage.number}`;
+    renamed.set(original, action.stage.id);
+  }
+  const ids = new Set(retainedIds);
+  for (const action of decision.actions) {
+    const stage = action.stage!;
+    stage.depends_on = stage.depends_on.map(
+      (dependency) => renamed.get(dependency) ?? dependency,
+    );
+    for (const dependency of stage.depends_on)
       if (!ids.has(dependency))
         throw new Error(`stage依赖不存在或顺序错误：${dependency}`);
-    ids.add(action.stage.id);
+    ids.add(stage.id);
   }
   const depended = new Set(
     decision.actions.flatMap((action) => action.stage?.depends_on ?? []),
@@ -272,6 +296,27 @@ function normalizeStages(decision: Decision, retryLimit: number) {
     };
   }
   return decision;
+}
+
+function simplePhysicalCompletion(goal: Goal) {
+  if ((goal.initial_mode ?? goal.mode) !== 'simple' || goal.skipped_stages?.length)
+    return false;
+  if (goal.checks?.some((check) => ['failed', 'uncertain'].includes(check.state)))
+    return false;
+  const active = goal.steps.filter(
+    (step) =>
+      ['grasp', 'pick_place', 'place_held'].includes(step.skill) &&
+      step.state !== 'superseded',
+  );
+  return (
+    active.length > 0 &&
+    active.every(
+      (step) =>
+        step.state === 'completed' &&
+        physicalVerdict((step.result ?? {}) as Record<string, unknown>, step.skill) ===
+          'passed',
+    )
+  );
 }
 
 async function advancedPlan(
@@ -336,7 +381,11 @@ async function advancedPlan(
       if (parsed.outcome === 'continue' && !parsed.actions.length)
         throw new Error('高级任务模型没有提交可执行阶段。');
       return parsed.actions.length
-        ? normalizeStages(parsed, context.settings.architecture?.stageRetryLimit ?? 2)
+        ? normalizeStages(
+            parsed,
+            context.settings.architecture?.stageRetryLimit ?? 2,
+            context.goal.steps.length ? context.goal : undefined,
+          )
         : parsed;
     },
   );
@@ -408,6 +457,16 @@ export async function reviewStagedPlanning(
     (event) => context.record(event),
     (value) => {
       const review = reviewSchema.parse(value);
+      if (review.verdict !== 'complete' && simplePhysicalCompletion(context.goal))
+        return decisionSchema.parse({
+          mode: 'simple',
+          outcome: 'complete',
+          message:
+            '高级复核已读取执行结果；有效抓放均有物理成功和释放证据，未重复执行已完成物体。',
+          actions: [],
+          final_review: false,
+          architecture: 'staged',
+        });
       const parsed = decisionSchema.parse({
         mode: 'complex',
         outcome: review.verdict === 'repair' ? 'continue' : review.verdict,
@@ -419,7 +478,11 @@ export async function reviewStagedPlanning(
         architecture: 'staged',
       });
       return parsed.actions.length
-        ? normalizeStages(parsed, context.settings.architecture?.stageRetryLimit ?? 2)
+        ? normalizeStages(
+            parsed,
+            context.settings.architecture?.stageRetryLimit ?? 2,
+            context.goal.steps.length ? context.goal : undefined,
+          )
         : parsed;
     },
   );
