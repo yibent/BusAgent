@@ -108,7 +108,11 @@ describe('immediate interaction routes', () => {
   });
   it('keeps acknowledgement and result followups out of motion planning', () => {
     expect(isAcknowledgement('嗯。')).toBe(true);
+    expect(isAcknowledgement('对。')).toBe(true);
+    expect(isAcknowledgement('可以做这个。喂。')).toBe(true);
+    expect(isAcknowledgement('没问题')).toBe(true);
     expect(isAcknowledgement('嗯，那就把红块拿起来')).toBe(false);
+    expect(isAcknowledgement('可以把红块拿起来')).toBe(false);
     expect(statusReply(emptyQueue(), '还没有得到结果吗？', 'current')?.text).toContain(
       '没有',
     );

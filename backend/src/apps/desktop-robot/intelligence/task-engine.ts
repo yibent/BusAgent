@@ -510,21 +510,33 @@ export class TaskEngine
         text,
       };
       if (isAcknowledgement(text)) {
-        await this.store.change((_, emit) =>
+        await this.store.change((state, emit) => {
+          const active = state.goals.findLast(
+            (goal) =>
+              goal.conversation_id === event.correlationId &&
+              !ended(goal) &&
+              ['queued', 'planning', 'running', 'review', 'paused'].includes(
+                goal.state,
+              ),
+          );
           this.emit(
             emit,
             `ack:${event.eventId}`,
             'intelligence.reply',
             event.correlationId,
             {
-              text: '我在。',
+              text: active
+                ? active.state === 'running'
+                  ? `正在执行“${active.summary || active.source}”。`
+                  : `“${active.summary || active.source}”正在处理中。`
+                : '我在。',
               instruction_id: event.eventId,
               user_text: text,
               interaction: true,
               verbatim: true,
             },
-          ),
-        );
+          );
+        });
         return;
       }
       if (/^(暂停|停止|停下|停|stop|pause)[。！!\s]*$/i.test(text)) {

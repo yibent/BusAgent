@@ -69,12 +69,23 @@ export function retryByPolicy(
   // These failures need new inputs/evidence; replaying the same command cannot
   // repair an ambiguous target, stale reference or missing argument.
   if (
-    ['REFERENCE_STALE', 'TARGET_AMBIGUOUS', 'CAPABILITY_MISSING'].includes(
-      String(object(result.failure).code),
-    )
+    [
+      'REFERENCE_STALE',
+      'TARGET_AMBIGUOUS',
+      'TARGET_NOT_FOUND',
+      'NO_FREE_SPACE',
+      'NO_CANDIDATE',
+      'MODEL_UNAVAILABLE',
+      'CAPABILITY_MISSING',
+      'WRONG_ORIENTATION',
+      'WRONG_CELL',
+      'NOT_SEATED',
+      'REGRASP_REQUIRED',
+    ].includes(String(object(result.failure).code))
   )
     return false;
-  if (['ValueError', 'FileNotFoundError'].includes(String(result.error_type))) return false;
+  if (['ValueError', 'FileNotFoundError'].includes(String(result.error_type)))
+    return false;
   const holding =
     object(state.scene.holding).verified || object(result.holding).verified;
   if (

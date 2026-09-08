@@ -947,9 +947,13 @@ export async function planGoal(
   // Budget the whole initial message, not each component independently: several
   // individually bounded reports plus history can still exceed one model window.
   const input = await window.toolResult('planning_input', initial);
+  // One evidence-gathering response, then a forced structured decision. A
+  // complex task can deliberately submit a stage and re-enter with new facts;
+  // it cannot spend an unbounded number of LLM calls preparing one decision.
+  const toolRoundLimit = Math.min(context.toolRounds ?? 2, 2);
   const result = await brain.generate(JSON.stringify(input), {
     toolCallConcurrency: { limit: 4, strategy: 'called' },
-    maxSteps: (context.toolRounds ?? 8) + 1,
+    maxSteps: toolRoundLimit + 1,
     maxProcessorRetries: 0,
     abortSignal: signal,
     modelSettings: { maxRetries: 0, maxOutputTokens: 3500 },
@@ -964,7 +968,7 @@ export async function planGoal(
         }
       : {}),
     prepareStep: ({ stepNumber }) =>
-      stepNumber >= (context.toolRounds ?? 8) ||
+      stepNumber >= toolRoundLimit ||
       (context.deadlineMs !== undefined &&
         context.deadlineMs - Date.now() <
           [profile, ...(context.fallbackProfiles ?? [])].reduce(

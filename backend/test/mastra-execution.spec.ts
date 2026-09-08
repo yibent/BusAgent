@@ -265,7 +265,7 @@ describe('Mastra owns the decision loop', () => {
       '"enum":["grasp","place_held"]',
     );
   });
-  it('lets native TokenLimiter retire tool history without losing the goal, held object or pending queue', async () => {
+  it('forces a structured decision after two tool rounds without losing current execution facts', async () => {
     const recovery = goal();
     recovery.steps[0]!.state = 'failed';
     recovery.steps[0]!.result = { failure: { code: 'NO_FREE_SPACE' } };
@@ -280,6 +280,9 @@ describe('Mastra owns the decision loop', () => {
       (
         _profile,
         messages: import('../src/apps/desktop-robot/intelligence/model-client.js').Message[],
+        _tools,
+        _signal,
+        options,
       ) => {
         expect(JSON.stringify(messages)).toContain('retain-this-original-goal');
         const control = messages.filter(
@@ -305,10 +308,13 @@ describe('Mastra owns the decision loop', () => {
             .map((m) => m.tool_call_id)
             .sort(),
         ).toEqual(ids);
+        const forced =
+          typeof options?.toolChoice === 'object' &&
+          options.toolChoice.function.name === 'submit_plan';
+        count++;
         return Promise.resolve(
-          count++ < 12
-            ? answer([['read_history', { query: `part-${count}` }]])
-            : answer([
+          forced
+            ? answer([
                 [
                   'submit_plan',
                   {
@@ -325,7 +331,8 @@ describe('Mastra owns the decision loop', () => {
                     queue_update: 'replace_pending',
                   },
                 ],
-              ]),
+              ])
+            : answer([['read_history', { query: `part-${count}` }]]),
         );
       },
     );
@@ -359,9 +366,9 @@ describe('Mastra owns the decision loop', () => {
       call,
     );
     expect(result.actions).toHaveLength(1);
-    expect(call).toHaveBeenCalledTimes(13);
+    expect(call).toHaveBeenCalledTimes(3);
     expect(record.mock.calls.some(([e]) => e.kind === 'brain_stopped')).toBe(false);
-    expect(call.mock.calls.at(-1)![1].length).toBeLessThan(26);
+    expect(call.mock.calls.at(-1)![1].length).toBeLessThan(12);
   });
 
   it('can enter recovery with a large physical report without exhausting the initial message budget', async () => {
@@ -526,6 +533,9 @@ describe('Mastra owns the decision loop', () => {
       { error_type: 'ValueError' },
       { failure: { code: 'REFERENCE_STALE' } },
       { failure: { code: 'TARGET_AMBIGUOUS' } },
+      { failure: { code: 'TARGET_NOT_FOUND' } },
+      { failure: { code: 'NO_FREE_SPACE' } },
+      { failure: { code: 'NO_CANDIDATE' } },
     ]) {
       g.steps[0]!.result = result;
       expect(retryByPolicy(g, state, make)).toBe(false);

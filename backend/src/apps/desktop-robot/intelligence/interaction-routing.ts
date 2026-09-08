@@ -3,8 +3,18 @@ import type { Action, Goal, QueueState } from './types.js';
 // These are optional shortcuts. Anything not fully matched still reaches the planner.
 const compact = (text: string) => text.replace(/[\s，。！？、,.!?]/g, '').toLowerCase();
 export const hasMeaningfulInput = (text: string) => /[\p{L}\p{N}]/u.test(text);
-export const isAcknowledgement = (text: string) =>
-  /^(?:嗯|呃|啊|哦|噢|唔|好的|好|收到|知道了|明白了|谢谢)+$/.test(compact(text));
+export const isAcknowledgement = (text: string) => {
+  const input = compact(text).replace(
+    /^(?:嗯|呃|啊|哦|噢|唔|喂)+|(?:嗯|呃|啊|哦|噢|唔|喂)+$/g,
+    '',
+  );
+  return (
+    !input ||
+    /^(?:好+的?|收到|知道了|明白了|谢谢|对+的?|是+的?|行|可以|可以(?:做|执行)(?:这个|它|刚才的?|上面的?)|没问题|就这样|按这个来|开始吧)$/.test(
+      input,
+    )
+  );
+};
 const command = (text: string) =>
   compact(text)
     .replace(/^(?:(?:嗯|呃|好的|好|那|你|请|帮我|麻烦|先|把))*/, '')

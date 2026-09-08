@@ -177,6 +177,10 @@ describe('durable goal execution', () => {
   });
   it('never turns a voice filler or progress followup into another goal', async () => {
     await engine.handle(context('filler', 'intent.created', { text: '嗯。' }));
+    await engine.handle(context('affirm', 'intent.created', { text: '对。' }));
+    await engine.handle(
+      context('affirm-context', 'intent.created', { text: '可以做这个。喂。' }),
+    );
     await engine.handle(
       context('status', 'intent.created', { text: '还没有得到结果吗？' }),
     );
@@ -189,6 +193,36 @@ describe('durable goal execution', () => {
           (event as { event_type: string }).event_type === 'robot.execute.requested',
       ),
     ).toBe(false);
+  });
+  it('treats contextual confirmation as feedback for the active goal, never as a copied task', async () => {
+    store.state.goals = [
+      {
+        id: 'active-goal',
+        conversation_id: 'conversation',
+        input_event_id: 'original',
+        source: '把三个零件放进托盘',
+        state: 'planning',
+        mode: 'simple',
+        summary: '整理三个零件',
+        completion: '三个零件都在托盘内',
+        steps: [],
+        message: '',
+        review_reason: '',
+        recovery_count: 0,
+        created_at: '',
+        updated_at: '',
+        model_calls: 0,
+        revision: 1,
+      },
+    ];
+    await engine.handle(
+      context('confirmation', 'intent.created', { text: '可以做这个。喂。' }),
+    );
+    expect(store.state.goals).toHaveLength(1);
+    expect(planning.planGoal).not.toHaveBeenCalled();
+    const reply = store.events.find((event) => event.key === 'ack:confirmation');
+    expect(JSON.stringify(reply?.event.payload)).toContain('整理三个零件');
+    expect(JSON.stringify(reply?.event.payload)).toContain('处理中');
   });
   it('keeps the scheduler and status replies available while visual preparation is waiting', async () => {
     let finish!: (value: boolean) => void;
