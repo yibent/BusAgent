@@ -38,6 +38,9 @@ export function immediateAction(text: string): Action | undefined {
 export function isSceneQuestion(text: string): boolean {
   const input = compact(text).replace(/^(?:(?:嗯|呃|请|你|帮我))*/, '');
   return (
+    /^(?:当前|现在|目前)?(?:可以|能)?(?:看到|看见)(?:些什么|什么|哪些)(?:东西|物体|物品|零件)?(?:吗|呢)?$/.test(
+      input,
+    ) ||
     /^(?:能|可以)?(?:看到|看见|看看|描述|说说)?(?:当前|现在)?(?:的)?(?:桌面|桌子|场景|画面)(?:上|里|中)?(?:都)?(?:(?:可以|能)?(?:看到|看见)|有)?(?:些什么|什么|哪些)(?:东西|物体|物品|零件)?(?:吗|呢)?$/.test(
       input,
     ) ||

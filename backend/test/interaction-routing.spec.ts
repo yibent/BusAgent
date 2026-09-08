@@ -47,18 +47,16 @@ describe('immediate interaction routes', () => {
     ])
       expect(statusReply(state, text, 'c')).toBeUndefined();
   });
-  it('answers explicit scene questions with one small image request and no motion tools', async () => {
+  it('answers explicit scene questions with one local observation and no remote model', async () => {
     const readState = vi.fn().mockResolvedValue({});
-    const readImage = vi.fn().mockResolvedValue({
-      bytes: Buffer.from('frame'),
-      metadata: { snapshot_ref: 'frame-1' },
+    const readImage = vi.fn();
+    const observe = vi.fn().mockResolvedValue({
+      command_id: 'scene-query',
+      vision: {
+        views: [{ objects: [{ label: 'block' }], caption: 'A block and a tray.' }],
+      },
     });
-    const call = vi.fn().mockResolvedValue({
-      message: { role: 'assistant', content: '桌面有一个蓝色料箱，部分物体被遮挡。' },
-      model: 'vision',
-      elapsed_ms: 20,
-      usage: {},
-    });
+    const call = vi.fn();
     const record = vi.fn().mockResolvedValue(undefined);
     const profile = {
       id: 'vision-test',
@@ -70,24 +68,19 @@ describe('immediate interaction routes', () => {
       'planner',
       { source: '你能看到桌面上有什么吗？', steps: [] } as unknown as Goal,
       emptyQueue(),
-      { readState, readImage, record, images: true },
+      { readState, readImage, observe, record, images: true },
       new AbortController().signal,
       call,
     );
     expect(result).toMatchObject({ outcome: 'chat', actions: [] });
     expect(readState).not.toHaveBeenCalled();
-    expect(readImage).toHaveBeenCalledTimes(1);
-    expect(call).toHaveBeenCalledTimes(1);
-    expect(call.mock.calls[0]?.[2]).toEqual([]);
+    expect(readImage).not.toHaveBeenCalled();
+    expect(observe).toHaveBeenCalledTimes(1);
+    expect(call).not.toHaveBeenCalled();
+    expect(result.message).toContain('方块');
     expect(
       record.mock.calls.map(([event]) => (event as { kind: string }).kind),
-    ).toEqual([
-      'operation_started',
-      'operation_completed',
-      'image',
-      'context_budget',
-      'model',
-    ]);
+    ).toEqual(['operation_started', 'operation_completed', 'vision_tool']);
   });
   it('recognizes the real spoken reset request without accepting negations or mixed tasks', () => {
     expect(immediateAction('嗯，那你。先把机械臂复位吧。')?.skill).toBe('home');
@@ -104,6 +97,7 @@ describe('immediate interaction routes', () => {
   it('reads an image only for an explicit simple scene question', () => {
     expect(isSceneQuestion('嗯。你能看到桌面上有什么吗？')).toBe(true);
     expect(isSceneQuestion('嗯。嗯。现在画面中可以看到什么？')).toBe(true);
+    expect(isSceneQuestion('嗯。现在可以看到什么呢？')).toBe(true);
     for (const text of [
       '先看桌面再把零件收好',
       '你刚才看到桌面有什么',

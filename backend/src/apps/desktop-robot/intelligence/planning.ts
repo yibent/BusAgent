@@ -379,6 +379,77 @@ export interface PlanningContext {
   ahead?: Record<string, unknown>;
 }
 
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+const localSceneLabel = (label: string) =>
+  ({
+    block: '方块',
+    cube: '方块',
+    cylinder: '圆柱',
+    nut: '螺母',
+    gear: '齿轮',
+    shaft: '轴',
+    bolt: '螺栓',
+    bracket: '支架',
+    sleeve: '轴套',
+    washer: '垫圈',
+    wrench: '扳手',
+    screwdriver: '螺丝刀',
+    tray: '料盘',
+    bowl: '碗状容器',
+    box: '箱体',
+    table: '桌面',
+  })[label.toLowerCase()] ?? label;
+
+export function localSceneReply(packet: Record<string, unknown>): string {
+  const vision = asRecord(packet.vision ?? packet);
+  const views = Array.isArray(vision.views) ? vision.views.map(asRecord) : [];
+  const labels = [
+    ...new Set(
+      views.flatMap((view) =>
+        Array.isArray(view.objects)
+          ? view.objects
+              .map(asRecord)
+              .map((item) => item.label)
+              .filter((label): label is string => typeof label === 'string' && !!label)
+          : [],
+      ),
+    ),
+  ].map(localSceneLabel);
+  const captions = [
+    ...new Set(
+      views
+        .map((view) => view.caption)
+        .filter(
+          (caption): caption is string => typeof caption === 'string' && !!caption,
+        ),
+    ),
+  ];
+  const regions = [
+    ...new Set(
+      views.flatMap((view) =>
+        Array.isArray(view.regions)
+          ? view.regions
+              .map(asRecord)
+              .map((item) => item.description)
+              .filter(
+                (description): description is string =>
+                  typeof description === 'string' && !!description,
+              )
+          : [],
+      ),
+    ),
+  ];
+  if (labels.length && captions.length)
+    return `当前画面识别到${labels.join('、')}。本地视觉描述：${captions.join('；')}`;
+  if (labels.length) return `当前画面识别到${labels.join('、')}。`;
+  if (captions.length) return `当前画面的本地视觉描述：${captions.join('；')}`;
+  if (regions.length) return `当前画面主要包含：${regions.join('、')}。`;
+  return '当前画面已读取，但本地视觉没有得到足够可靠的物体类别。';
+}
+
 let brainMemory: Memory | undefined;
 function memory() {
   if (!brainMemory) {
@@ -444,54 +515,32 @@ export async function planGoal(
   if (
     role === 'planner' &&
     !goal.steps.length &&
-    context.images &&
+    context.observe &&
     isSceneQuestion(goal.source)
   ) {
-    const frame = await context.readImage('scene');
-    await context.record({
-      kind: 'image',
-      role,
-      purpose: goal.source,
-      ...frame.metadata,
-    });
-    const observer = new Agent({
-      id: 'scene-observer',
-      name: 'Scene observer',
-      instructions:
-        '根据当前图片用不超过150汉字回答观察问题。仅描述可见情况，不执行动作，不猜遮挡物体或材料。',
-      model: mastraModel(
-        [profile, ...(context.fallbackProfiles ?? [])],
-        signal,
-        (e) => context.record({ role, route: 'scene_query', ...e }),
-        call,
-      ),
-    });
-    const answer = await observer.generate(
-      [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: goal.source },
-            {
-              type: 'image',
-              image: `data:image/jpeg;base64,${frame.bytes.toString('base64')}`,
-            },
-          ],
-        },
-      ],
+    const observed = await context.observe(
       {
-        maxSteps: 1,
-        abortSignal: signal,
-        modelSettings: { maxRetries: 0, maxOutputTokens: 1000 },
+        scope: 'scene',
+        scene_mode: 'caption',
+        cameras: ['scene_camera'],
       },
+      signal,
     );
-    if (!answer.text?.trim()) throw new Error('场景观察未返回有效描述');
+    await context.record({
+      kind: 'vision_tool',
+      role,
+      route: 'local_scene_query',
+      purpose: goal.source,
+      command_id: observed.command_id,
+      result: planningEvidence(observed),
+    });
     return decisionSchema.parse({
       mode: 'simple',
       outcome: 'chat',
-      message: answer.text,
+      message: localSceneReply(observed),
       actions: [],
       plan_scope: 'complete',
+      evidence_reply: true,
     });
   }
   const window = new InferenceWindow(
