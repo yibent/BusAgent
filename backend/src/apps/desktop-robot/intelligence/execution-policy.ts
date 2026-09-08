@@ -74,7 +74,7 @@ export function retryByPolicy(
     )
   )
     return false;
-  if (result.error_type === 'ValueError') return false;
+  if (['ValueError', 'FileNotFoundError'].includes(String(result.error_type))) return false;
   const holding =
     object(state.scene.holding).verified || object(result.holding).verified;
   if (

@@ -521,6 +521,17 @@ describe('Mastra owns the decision loop', () => {
       command_id: 'retry-command',
       state: 'pending' as const,
     }));
+    for (const result of [
+      { error_type: 'FileNotFoundError' },
+      { error_type: 'ValueError' },
+      { failure: { code: 'REFERENCE_STALE' } },
+      { failure: { code: 'TARGET_AMBIGUOUS' } },
+    ]) {
+      g.steps[0]!.result = result;
+      expect(retryByPolicy(g, state, make)).toBe(false);
+    }
+    expect(make).not.toHaveBeenCalled();
+    g.steps[0]!.result = {};
     expect(retryByPolicy(g, state, make)).toBe(true);
     const retry = g.steps[1]!;
     expect(retry.attempt).toBe(2);
