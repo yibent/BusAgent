@@ -143,10 +143,9 @@ export async function getWorkspace(): Promise<WorkspaceState> {
   }
 }
 
-export async function transitionWorkspace(scene_id: string, token: string) {
+export async function transitionWorkspace(scene_id: string) {
   return request<WorkspaceLifecycle>("/v1/workspace/transition", {
     scene_id,
-    token,
     request_id: crypto.randomUUID(),
   });
 }

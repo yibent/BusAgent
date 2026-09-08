@@ -2,7 +2,6 @@ import { spawn } from 'node:child_process';
 import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { ModelConfig } from './model-config.js';
 
 const root = resolve(
   process.env.BUSAGENT_WORKSPACE_ROOT ?? resolve(process.cwd(), '../..'),
@@ -77,13 +76,11 @@ export async function workspaceStatus() {
 }
 
 export async function submitWorkspaceTransition(
-  body: { token?: unknown; scene_id?: unknown; request_id?: unknown },
-  models: ModelConfig,
+  body: { scene_id?: unknown; request_id?: unknown },
 ) {
   if (submitting) throw new Error('场景切换请求正在提交，请稍候。');
   submitting = true;
   try {
-    await models.authorize(body.token);
     const sceneId = typeof body.scene_id === 'string' ? body.scene_id : '';
     const requestId = typeof body.request_id === 'string' ? body.request_id : '';
     if (!/^[a-f0-9-]{32,40}$/.test(requestId)) throw new Error('请求编号无效。');

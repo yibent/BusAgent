@@ -70,7 +70,6 @@ export function WorkbenchPage() {
     scene: string;
     fullReset: boolean;
   } | null>(null);
-  const [adminToken, setAdminToken] = useState("");
   const [submittingTransition, setSubmittingTransition] = useState(false);
   const knownEpoch = useRef<string | null>(null);
   const lifecycle = workspace?.lifecycle;
@@ -89,10 +88,10 @@ export function WorkbenchPage() {
     }
   }, [lifecycle, operation]);
   const confirmTransition = async () => {
-    if (!confirmation || !adminToken.trim()) return;
+    if (!confirmation) return;
     setSubmittingTransition(true);
     try {
-      await transitionWorkspace(confirmation.scene, adminToken.trim());
+      await transitionWorkspace(confirmation.scene);
       setConfirmation(null);
       await refresh();
     } catch (e) {
@@ -479,18 +478,6 @@ export function WorkbenchPage() {
               </p>
             ) : (
               <>
-                <label>
-                  管理令牌
-                  <input
-                    className="ui-input"
-                    aria-label="场景切换管理令牌"
-                    type="password"
-                    autoComplete="off"
-                    value={adminToken}
-                    onChange={(event) => setAdminToken(event.target.value)}
-                    placeholder="与模型设置使用同一管理令牌"
-                  />
-                </label>
                 <div className="flex justify-end gap-3">
                   <Button
                     variant="outline"
@@ -498,10 +485,7 @@ export function WorkbenchPage() {
                   >
                     取消
                   </Button>
-                  <Button
-                    disabled={!adminToken.trim()}
-                    onClick={() => void confirmTransition()}
-                  >
+                  <Button onClick={() => void confirmTransition()}>
                     {confirmation?.fullReset ? "清空并重新加载" : "清空并切换"}
                   </Button>
                 </div>
@@ -545,7 +529,7 @@ export function WorkbenchPage() {
                 点击悬浮球开始说话，再次点击结束。悬停或用键盘聚焦悬浮球，可打开文字输入；对话可在左侧面板查看。
               </p>
               <p>
-                物体或机械臂局部复位只重建仿真状态并保留任务记录。场景切换和完全重置会在管理令牌校验后清空当前场景历史并重新加载。
+                物体或机械臂局部复位只重建仿真状态并保留任务记录。场景切换和完全重置会在确认后清空当前场景历史并重新加载。
               </p>
             </div>
           </DialogContent>

@@ -62,11 +62,9 @@ export function intelligenceRoutes(
     route((request) =>
       submitWorkspaceTransition(
         request.body as {
-          token?: unknown;
           scene_id?: unknown;
           request_id?: unknown;
         },
-        models,
       ),
     ),
   );
