@@ -28,7 +28,8 @@ import {
 import { Button } from "@/components/ui/button";
 
 export type SettingsPage = "tasks" | "routes" | "providers" | "runtime";
-type NodeRole = "planner" | "supervisor" | "visual" | "dialogue";
+type NodeRole = "task" | "planner" | "supervisor" | "visual" | "dialogue";
+type FallbackPolicy = "disabled" | "same_capability" | "ordered_compatible";
 type Profile = {
   id: string;
   name: string;
@@ -39,18 +40,30 @@ type Profile = {
   configured: boolean;
   enabled: boolean;
   vision: boolean;
+  boxGrounding: boolean;
   thinking: boolean;
   reasoningEffort?: "minimal" | "low" | "medium" | "high" | "max";
   timeoutMs?: number;
+  firstTokenTimeoutMs?: number;
 };
 type Settings = {
   profiles: Profile[];
   roles: Record<NodeRole, string>;
   fallbacks: Record<NodeRole, string[]>;
   nodeTimeouts: Partial<Record<NodeRole | "perception", number>>;
+  nodeFirstTokenTimeouts: Partial<Record<NodeRole, number>>;
+  fallbackPolicies: Partial<
+    Record<Exclude<NodeRole, "dialogue">, FallbackPolicy>
+  >;
   images: boolean;
   supervisorEnabled: boolean;
   recoveryBudget: number;
+  architecture: {
+    mode: "legacy" | "staged";
+    stageRetryLimit: number;
+    finalReviewLimit: number;
+    finalReview: boolean;
+  };
   dialogueRouting?: {
     activeProfile: string;
     consecutiveFailures: number;
@@ -59,6 +72,7 @@ type Settings = {
   performance: {
     lookahead: boolean;
     requestTimeoutMs: number;
+    firstTokenTimeoutMs?: number;
     planningBudgetMs: number;
     toolRounds: number;
     contextBudgetTokens?: number;
@@ -72,6 +86,13 @@ type Step = {
   skill: string;
   state: string;
   result?: Record<string, unknown>;
+  stage?: {
+    id: string;
+    number: number;
+    title: string;
+    depends_on: string[];
+    expected_state: string;
+  };
 };
 type Goal = {
   id: string;
@@ -82,6 +103,8 @@ type Goal = {
   message: string;
   steps: Step[];
   model_calls: number;
+  list_number?: number;
+  architecture?: "legacy" | "staged";
 };
 type Queue = { enabled: boolean; paused: boolean; goals: Goal[] };
 
@@ -113,22 +136,29 @@ const nodes: Array<{
   vision?: boolean;
 }> = [
   {
-    id: "planner",
+    id: "task",
     code: "AI-01",
-    title: "任务规划",
-    detail: "理解指令并生成完整结构化动作序列。",
+    title: "快速任务模型",
+    detail: "一次判断无需执行、简单计划、复杂升级或修改已有列表。",
+    icon: Route,
+  },
+  {
+    id: "planner",
+    code: "AI-02",
+    title: "高级任务模型",
+    detail: "复杂任务读取场景证据并生成带依赖的阶段序列。",
     icon: BrainCircuit,
   },
   {
     id: "supervisor",
-    code: "AI-02",
-    title: "异常监督",
-    detail: "只处理失败、证据冲突和最终语义验收。",
+    code: "AI-03",
+    title: "列表最终复核",
+    detail: "列表结束后结合阶段结果和最新场景做一次集中验收。",
     icon: ShieldCheck,
   },
   {
     id: "visual",
-    code: "AI-03",
+    code: "AI-04",
     title: "视觉语义选择",
     detail: "本地视觉无法消除关系歧义时才读取图片。",
     icon: Eye,
@@ -136,7 +166,7 @@ const nodes: Array<{
   },
   {
     id: "dialogue",
-    code: "AI-04",
+    code: "AI-05",
     title: "即时对话",
     detail: "负责自然接话和结果表达，连续三次失败后切换。",
     icon: MessageSquareText,
@@ -178,17 +208,33 @@ const normalizeSettings = (settings: Settings): Settings => ({
   ...settings,
   roles: {
     ...settings.roles,
+    task: settings.roles.task ?? settings.roles.planner,
     visual: settings.roles.visual ?? settings.roles.planner,
   },
   fallbacks: {
     ...settings.fallbacks,
+    task: settings.fallbacks.task ?? settings.fallbacks.planner ?? [],
     visual: settings.fallbacks.visual ?? settings.fallbacks.planner ?? [],
   },
   nodeTimeouts: settings.nodeTimeouts ?? {},
+  nodeFirstTokenTimeouts: settings.nodeFirstTokenTimeouts ?? {},
+  fallbackPolicies: {
+    task: settings.fallbackPolicies?.task ?? "ordered_compatible",
+    planner: settings.fallbackPolicies?.planner ?? "same_capability",
+    supervisor: settings.fallbackPolicies?.supervisor ?? "same_capability",
+    visual: settings.fallbackPolicies?.visual ?? "same_capability",
+  },
   performance: {
     ...settings.performance,
     providerCooldownEnabled:
       settings.performance.providerCooldownEnabled ?? false,
+    firstTokenTimeoutMs: settings.performance.firstTokenTimeoutMs ?? 8000,
+  },
+  architecture: settings.architecture ?? {
+    mode: "staged",
+    stageRetryLimit: 2,
+    finalReviewLimit: 2,
+    finalReview: true,
   },
 });
 
@@ -203,9 +249,21 @@ function FallbackChain({
 }) {
   const ids = settings.fallbacks[role] ?? [];
   const primary = settings.roles[role];
+  const primaryProfile = settings.profiles.find(
+    (profile) => profile.id === primary,
+  );
+  const policy =
+    role === "dialogue" ? undefined : settings.fallbackPolicies[role];
   const wantsVision = nodes.find((node) => node.id === role)?.vision;
   const eligible = settings.profiles.filter(
-    (profile) => profile.enabled && (!wantsVision || profile.vision),
+    (profile) =>
+      profile.enabled &&
+      (ids.includes(profile.id) ||
+        ((!wantsVision || profile.vision) &&
+          (policy !== "same_capability" ||
+            !primaryProfile ||
+            (profile.vision === primaryProfile.vision &&
+              (!primaryProfile.boxGrounding || profile.boxGrounding))))),
   );
   const update = (fallbacks: string[]) =>
     onChange({
@@ -219,7 +277,11 @@ function FallbackChain({
         <small>
           {role === "dialogue"
             ? "连续 3 次失败后固定切换"
-            : "当前请求失败后依次尝试"}
+            : policy === "disabled"
+              ? "当前节点不自动回退"
+              : policy === "same_capability"
+                ? "只切换到具备相同图像/框选能力的模型"
+                : "按顺序尝试所有兼容渠道"}
         </small>
       </div>
       {ids.map((id, index) => (
@@ -563,7 +625,12 @@ export function IntelligencePanel({
                           <span>{stateNames[goal.state] ?? goal.state}</span>
                           <small>{goal.model_calls} 次模型请求</small>
                         </div>
-                        <h3>{goal.summary || goal.source}</h3>
+                        <h3>
+                          {goal.list_number
+                            ? `列表 ${goal.list_number} · `
+                            : ""}
+                          {goal.summary || goal.source}
+                        </h3>
                         {goal.summary && (
                           <p className="queue-source">{goal.source}</p>
                         )}
@@ -585,6 +652,12 @@ export function IntelligencePanel({
                                       {stateNames[step.state] ?? step.state} ·{" "}
                                       {step.skill}
                                     </small>
+                                    {step.stage && (
+                                      <small className="stage-condition">
+                                        阶段 {step.stage.number} · 验收：
+                                        {step.stage.expected_state}
+                                      </small>
+                                    )}
                                   </div>
                                   {step.result && (
                                     <details>
@@ -669,6 +742,18 @@ export function IntelligencePanel({
                       node.id === "dialogue"
                         ? settings.dialogueRouting?.activeProfile
                         : settings.roles[node.id];
+                    const primaryProfile = settings.profiles.find(
+                      (profile) => profile.id === settings.roles[node.id],
+                    );
+                    const defaultFirstToken =
+                      primaryProfile?.firstTokenTimeoutMs ??
+                      (primaryProfile?.vision &&
+                      ["planner", "supervisor", "visual"].includes(node.id)
+                        ? 30000
+                        : (settings.performance.firstTokenTimeoutMs ?? 8000));
+                    const firstTokenTimeout =
+                      settings.nodeFirstTokenTimeouts[node.id] ??
+                      defaultFirstToken;
                     return (
                       <article className="route-card" key={node.id}>
                         <div className="route-title">
@@ -693,6 +778,16 @@ export function IntelligencePanel({
                                 0}
                               /3
                             </span>
+                          </div>
+                        )}
+                        {node.id === "planner" && (
+                          <div className="route-health capability-route">
+                            {settings.profiles.find(
+                              (profile) =>
+                                profile.id === settings.roles.planner,
+                            )?.boxGrounding
+                              ? "当前高级模型可直接输出冻结图像框，随后由 SAM2 + 深度绑定。"
+                              : "当前高级模型不直接框选；目标最终由本地 Florence 提供候选框。"}
                           </div>
                         )}
                         <div className="route-fields">
@@ -733,9 +828,12 @@ export function IntelligencePanel({
                                 min={1}
                                 max={120}
                                 value={
-                                  (settings.nodeTimeouts[node.id] ??
-                                    settings.performance.requestTimeoutMs) /
-                                  1000
+                                  Math.max(
+                                    firstTokenTimeout,
+                                    settings.nodeTimeouts[node.id] ??
+                                      primaryProfile?.timeoutMs ??
+                                      settings.performance.requestTimeoutMs,
+                                  ) / 1000
                                 }
                                 onChange={(event) =>
                                   setSettings({
@@ -751,6 +849,56 @@ export function IntelligencePanel({
                               <i>秒</i>
                             </span>
                           </label>
+                          <label>
+                            首字等待
+                            <span className="unit-input">
+                              <input
+                                aria-label={node.title + "首字等待秒数"}
+                                type="number"
+                                min={1}
+                                max={120}
+                                value={firstTokenTimeout / 1000}
+                                onChange={(event) =>
+                                  setSettings({
+                                    ...settings,
+                                    nodeFirstTokenTimeouts: {
+                                      ...settings.nodeFirstTokenTimeouts,
+                                      [node.id]:
+                                        Number(event.target.value) * 1000,
+                                    },
+                                  })
+                                }
+                              />
+                              <i>秒</i>
+                            </span>
+                          </label>
+                          {node.id !== "dialogue" && (
+                            <label>
+                              回退策略
+                              <select
+                                aria-label={node.title + "回退策略"}
+                                value={settings.fallbackPolicies[node.id]}
+                                onChange={(event) =>
+                                  setSettings({
+                                    ...settings,
+                                    fallbackPolicies: {
+                                      ...settings.fallbackPolicies,
+                                      [node.id]: event.target
+                                        .value as FallbackPolicy,
+                                    },
+                                  })
+                                }
+                              >
+                                <option value="disabled">不自动回退</option>
+                                <option value="same_capability">
+                                  仅同能力模型
+                                </option>
+                                <option value="ordered_compatible">
+                                  按顺序兼容回退
+                                </option>
+                              </select>
+                            </label>
+                          )}
                         </div>
                         <FallbackChain
                           settings={settings}
@@ -789,6 +937,7 @@ export function IntelligencePanel({
                             enabled: false,
                             configured: false,
                             vision: false,
+                            boxGrounding: false,
                             thinking: false,
                           },
                         ],
@@ -882,6 +1031,28 @@ export function IntelligencePanel({
                               <i>秒</i>
                             </span>
                           </label>
+                          <label>
+                            首字超时
+                            <span className="unit-input">
+                              <input
+                                type="number"
+                                min={1}
+                                max={120}
+                                value={
+                                  (profile.firstTokenTimeoutMs ??
+                                    settings.performance.firstTokenTimeoutMs ??
+                                    8000) / 1000
+                                }
+                                onChange={(event) =>
+                                  change({
+                                    firstTokenTimeoutMs:
+                                      Number(event.target.value) * 1000,
+                                  })
+                                }
+                              />
+                              <i>秒</i>
+                            </span>
+                          </label>
                           <label className="wide">
                             API 令牌
                             <div className="token-control">
@@ -924,33 +1095,53 @@ export function IntelligencePanel({
                           </label>
                         </div>
                         <div className="provider-flags">
-                          {(["enabled", "vision", "thinking"] as const).map(
-                            (key) => (
-                              <label key={key}>
-                                <input
-                                  type="checkbox"
-                                  checked={
-                                    key === "thinking" && fixedThinking(profile)
-                                      ? true
-                                      : profile[key]
-                                  }
-                                  disabled={
-                                    key === "thinking" && fixedThinking(profile)
-                                  }
-                                  onChange={(event) =>
-                                    change({ [key]: event.target.checked })
-                                  }
-                                />
-                                {key === "enabled"
-                                  ? "启用"
-                                  : key === "vision"
-                                    ? "支持图像"
+                          {(
+                            [
+                              "enabled",
+                              "vision",
+                              "boxGrounding",
+                              "thinking",
+                            ] as const
+                          ).map((key) => (
+                            <label key={key}>
+                              <input
+                                type="checkbox"
+                                checked={
+                                  key === "thinking" && fixedThinking(profile)
+                                    ? true
+                                    : profile[key]
+                                }
+                                disabled={
+                                  (key === "thinking" &&
+                                    fixedThinking(profile)) ||
+                                  (key === "boxGrounding" && !profile.vision)
+                                }
+                                onChange={(event) =>
+                                  change(
+                                    key === "vision" && !event.target.checked
+                                      ? {
+                                          vision: false,
+                                          boxGrounding: false,
+                                        }
+                                      : { [key]: event.target.checked },
+                                  )
+                                }
+                              />
+                              {key === "enabled"
+                                ? "启用"
+                                : key === "vision"
+                                  ? "支持图像"
+                                  : key === "boxGrounding"
+                                    ? "原生框选"
                                     : fixedThinking(profile)
                                       ? "固定思考"
                                       : "开启思考"}
-                              </label>
-                            ),
-                          )}
+                            </label>
+                          ))}
+                          <small className="provider-capability-note">
+                            原生框选关闭时，目标定位自动使用 YOLOE → SAM3 →
+                            Florence；适合 DeepSeek 等文本模型。
+                          </small>
                           {fixedThinking(profile) && (
                             <select
                               aria-label={profile.name + "思考强度"}
@@ -1085,6 +1276,114 @@ export function IntelligencePanel({
                   </div>
                 </header>
                 <div className="runtime-grid">
+                  <section className="runtime-block architecture-block">
+                    <div className="runtime-title">
+                      <BrainCircuit />
+                      <div>
+                        <h3>Agent 架构</h3>
+                        <p>新旧逻辑并存，切换后从下一条用户输入开始生效。</p>
+                      </div>
+                    </div>
+                    <div className="architecture-selector">
+                      <button
+                        className={
+                          settings.architecture.mode === "staged"
+                            ? "active"
+                            : ""
+                        }
+                        onClick={() =>
+                          setSettings({
+                            ...settings,
+                            architecture: {
+                              ...settings.architecture,
+                              mode: "staged",
+                            },
+                          })
+                        }
+                      >
+                        <strong>阶段任务架构</strong>
+                        <span>
+                          一次快速分流 · 按需高级规划 · Florence 阶段检查
+                        </span>
+                      </button>
+                      <button
+                        className={
+                          settings.architecture.mode === "legacy"
+                            ? "active"
+                            : ""
+                        }
+                        onClick={() =>
+                          setSettings({
+                            ...settings,
+                            architecture: {
+                              ...settings.architecture,
+                              mode: "legacy",
+                            },
+                          })
+                        }
+                      >
+                        <strong>旧 Mastra 架构</strong>
+                        <span>保留原工具循环，供兼容与对照测试。</span>
+                      </button>
+                    </div>
+                    <div className="runtime-fields compact-fields">
+                      <label>
+                        阶段最大执行次数
+                        <input
+                          type="number"
+                          min={1}
+                          max={8}
+                          value={settings.architecture.stageRetryLimit}
+                          onChange={(event) =>
+                            setSettings({
+                              ...settings,
+                              architecture: {
+                                ...settings.architecture,
+                                stageRetryLimit: Number(event.target.value),
+                              },
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        高级复核上限
+                        <input
+                          type="number"
+                          min={1}
+                          max={4}
+                          value={settings.architecture.finalReviewLimit}
+                          onChange={(event) =>
+                            setSettings({
+                              ...settings,
+                              architecture: {
+                                ...settings.architecture,
+                                finalReviewLimit: Number(event.target.value),
+                              },
+                            })
+                          }
+                        />
+                      </label>
+                      <label className="switch-row inline-switch">
+                        <span>
+                          <strong>列表结束高级复核</strong>
+                          <small>任务完成后集中调用一次复核模型。</small>
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={settings.architecture.finalReview}
+                          onChange={(event) =>
+                            setSettings({
+                              ...settings,
+                              architecture: {
+                                ...settings.architecture,
+                                finalReview: event.target.checked,
+                              },
+                            })
+                          }
+                        />
+                      </label>
+                    </div>
+                  </section>
                   <section className="runtime-block local-vision">
                     <div className="runtime-title">
                       <Eye />
@@ -1180,6 +1479,31 @@ export function IntelligencePanel({
                     </label>
                     <div className="runtime-fields">
                       <label>
+                        流式首字上限
+                        <span className="unit-input">
+                          <input
+                            type="number"
+                            min={1}
+                            max={120}
+                            value={
+                              (settings.performance.firstTokenTimeoutMs ??
+                                8000) / 1000
+                            }
+                            onChange={(event) =>
+                              setSettings({
+                                ...settings,
+                                performance: {
+                                  ...settings.performance,
+                                  firstTokenTimeoutMs:
+                                    Number(event.target.value) * 1000,
+                                },
+                              })
+                            }
+                          />
+                          <i>秒</i>
+                        </span>
+                      </label>
+                      <label>
                         整轮规划上限
                         <span className="unit-input">
                           <input
@@ -1202,7 +1526,7 @@ export function IntelligencePanel({
                         </span>
                       </label>
                       <label>
-                        最大工具轮数
+                        旧架构工具轮数
                         <input
                           type="number"
                           min={1}
@@ -1300,7 +1624,7 @@ export function IntelligencePanel({
                     <label className="switch-row">
                       <span>
                         <strong>运动期间提前规划</strong>
-                        <small>只预处理与当前动作独立的下一任务。</small>
+                        <small>仅供旧架构预处理独立的下一任务。</small>
                       </span>
                       <input
                         type="checkbox"

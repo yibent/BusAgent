@@ -5,7 +5,8 @@ export const supervisionSchema = z.object({
   camera: z.enum(['scene', 'side', 'wrist']).optional(),
   box_2d: z.array(z.number().min(0).max(1000)).length(4).optional(),
   target_label: z.string().optional(),
-  predicate: z.enum(['present', 'upright']).optional(),
+  region_label: z.string().optional(),
+  predicate: z.enum(['present', 'inside', 'on', 'upright']).optional(),
   wait: z.boolean().optional(),
 });
 export const executionPolicySchema = z.object({
@@ -32,7 +33,14 @@ export const executionPolicyJsonSchema = {
           maxItems: 4,
         },
         target_label: { type: 'string' },
-        predicate: { type: 'string', enum: ['present', 'upright'] },
+        region_label: {
+          type: 'string',
+          description: '没有可靠区域框时，由Florence先定位这个目标区域。',
+        },
+        predicate: {
+          type: 'string',
+          enum: ['present', 'inside', 'on', 'upright'],
+        },
         wait: { type: 'boolean' },
       },
       required: ['kind'],

@@ -2887,6 +2887,72 @@ p {
   overflow: auto;
   padding: 23px 26px 82px;
 }
+.architecture-block {
+  grid-column: 1 / -1;
+  background:
+    linear-gradient(115deg, rgba(208, 169, 120, 0.08), transparent 58%), #1c1e22;
+}
+.architecture-selector {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 16px 0;
+}
+.architecture-selector button {
+  min-height: 74px;
+  padding: 13px 14px;
+  border: 1px solid #383c43;
+  background: #17191d;
+  color: #9198a2;
+  text-align: left;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    color 140ms ease;
+}
+.architecture-selector button:hover {
+  border-color: #5b5550;
+  color: #d9d5cf;
+}
+.architecture-selector button.active {
+  border-color: #b38b5d;
+  background: linear-gradient(135deg, #302a23, #202226 70%);
+  color: #f0e5d4;
+  box-shadow: inset 3px 0 #d0a978;
+}
+.architecture-selector strong,
+.architecture-selector span {
+  display: block;
+}
+.architecture-selector strong {
+  font-size: 12px;
+  letter-spacing: 0.03em;
+}
+.architecture-selector span {
+  margin-top: 6px;
+  color: #777e88;
+  font: 9px/1.5 var(--mono);
+}
+.compact-fields {
+  align-items: end;
+}
+.inline-switch {
+  min-height: 54px;
+}
+.provider-capability-note {
+  flex-basis: 100%;
+  color: #707781;
+  font: 9px/1.5 var(--mono);
+}
+.capability-route {
+  line-height: 1.5;
+  color: #9ba1aa;
+}
+.queue-card .stage-condition {
+  margin-top: 3px;
+  color: #aa895f;
+  line-height: 1.45;
+}
 .stage-header {
   display: flex;
   align-items: flex-end;

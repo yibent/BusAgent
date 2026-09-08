@@ -282,6 +282,20 @@ export const TOOLS: Tool[] = [
                     '此动作之后是否必须重新调用Mastra决策。普通连续动作false；仅后续步骤依赖新证据/决策时true，局部异步监督在execution中设置。',
                 },
                 execution: executionPolicyJsonSchema,
+                stage: object(
+                  {
+                    id: { type: 'string', pattern: '^[a-zA-Z0-9_-]+$' },
+                    number: { type: 'integer', minimum: 1 },
+                    title: { type: 'string' },
+                    depends_on: { type: 'array', items: { type: 'string' } },
+                    expected_state: {
+                      type: 'string',
+                      description:
+                        '本阶段完成后目标区域应呈现的可观察状态，例如“A直立在B容器内”。',
+                    },
+                  },
+                  ['id', 'number', 'title', 'depends_on', 'expected_state'],
+                ),
               },
               ['title', 'skill', 'params'],
             ),

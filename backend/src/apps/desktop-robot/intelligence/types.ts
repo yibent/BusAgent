@@ -24,6 +24,13 @@ export type GoalState =
   | 'blocked'
   | 'completed'
   | 'cancelled';
+export const stageSchema = z.object({
+  id: z.string().regex(/^[a-zA-Z0-9_-]+$/),
+  number: z.number().int().min(1),
+  title: z.string().min(1),
+  depends_on: z.array(z.string()).default([]),
+  expected_state: z.string().min(1),
+});
 export const actionSchema = z
   .object({
     title: z.string().min(1),
@@ -31,6 +38,7 @@ export const actionSchema = z
     params: z.record(z.unknown()).default({}),
     review_after: z.boolean().default(false),
     execution: executionPolicySchema.optional(),
+    stage: stageSchema.optional(),
   })
   .transform((action) => ({
     ...action,
@@ -52,6 +60,11 @@ export const decisionSchema = z.object({
   evidence_reply: z.boolean().optional(),
   queue_update: z.enum(['replace_pending', 'append']).optional(),
   final_review: z.boolean().optional(),
+  /** Internal routing metadata; never becomes a controller parameter. */
+  silent: z.boolean().optional(),
+  target_goal_id: z.string().optional(),
+  advanced_requirement: z.string().optional(),
+  architecture: z.enum(['legacy', 'staged']).optional(),
 });
 export type Decision = z.infer<typeof decisionSchema>;
 export const reviewSchema = z.object({
@@ -101,7 +114,7 @@ export interface Goal {
   checks?: VerificationJob[];
   local_recoveries?: string[];
   plan_scope?: 'complete' | 'stage';
-  review_kind?: 'continuation' | 'verification' | 'failure';
+  review_kind?: 'continuation' | 'verification' | 'failure' | 'final';
   inference_request?: {
     id: string;
     role: Role;
@@ -109,6 +122,11 @@ export interface Goal {
     requested_at: string;
   };
   planning_ahead?: string;
+  list_number?: number;
+  architecture?: 'legacy' | 'staged';
+  advanced_requirement?: string;
+  skipped_stages?: string[];
+  final_review_count?: number;
   proposal?: Action[];
   interaction?: boolean;
   id: string;

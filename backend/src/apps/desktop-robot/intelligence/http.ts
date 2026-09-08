@@ -109,6 +109,17 @@ export function intelligenceRoutes(
       const settings = await models.settings();
       const profile = settings.profiles.find((p) => p.id === body.profile);
       if (!profile?.apiKey) throw new Error('模型缺少 API Key。');
+      const firstTokenTimeoutMs =
+        profile.firstTokenTimeoutMs ??
+        (body.vision ? 30000 : (settings.performance.firstTokenTimeoutMs ?? 8000));
+      const effectiveProfile = {
+        ...profile,
+        firstTokenTimeoutMs,
+        timeoutMs: Math.max(
+          firstTokenTimeoutMs,
+          profile.timeoutMs ?? settings.performance.requestTimeoutMs,
+        ),
+      };
       const messages: Message[] = [{ role: 'user', content: 'Reply with exactly OK.' }];
       if (body.vision) {
         if (!settings.images || !profile.vision)
@@ -130,12 +141,13 @@ export function intelligenceRoutes(
           ],
         };
       }
-      const answer = await complete(profile, messages, []);
+      const answer = await complete(effectiveProfile, messages, []);
       return {
         ok: true,
         vision_tested: body.vision === true,
         model: profile.model,
         elapsed_ms: answer.elapsed_ms,
+        first_token_ms: answer.first_token_ms,
         usage: answer.usage,
         message: answer.message.content,
       };

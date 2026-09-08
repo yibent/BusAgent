@@ -113,6 +113,7 @@ export function mastraModel(
       model: result.model,
       usage: result.usage,
       elapsed_ms: result.elapsed_ms,
+      first_token_ms: result.first_token_ms,
       tool_calls: (result.message.tool_calls ?? []).map((tool) => tool.function.name),
       tool_call_count: result.message.tool_calls?.length ?? 0,
     });

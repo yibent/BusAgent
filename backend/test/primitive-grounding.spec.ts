@@ -148,4 +148,44 @@ describe('late binding for ordinary manipulations', () => {
     const observe = vi.fn().mockResolvedValue({ collection: { instances: [] } });
     await expect(groundPrimitive(request, observe)).rejects.toThrow('未下发机械动作');
   });
+  it('turns a model box into same-snapshot SAM2 grounding before manipulation', async () => {
+    const boxed: Action = {
+      title: '抓取框选零件',
+      skill: 'grasp',
+      review_after: false,
+      params: {
+        target: {
+          label: 'unknown metal part',
+          grounding: {
+            snapshot_ref: 'a'.repeat(32),
+            camera: 'scene_camera',
+            box_2d: [100, 200, 500, 700],
+          },
+        },
+      },
+    };
+    const observe = vi.fn().mockResolvedValue({
+      vision: {
+        references: [
+          { ref: 'grounded-part', kind: 'object', semantic_status: 'candidate' },
+        ],
+      },
+    });
+    const result = await groundPrimitive(boxed, observe);
+    expect(observe).toHaveBeenCalledWith({
+      scope: 'target',
+      category: 'unknown metal part',
+      selection: 'one',
+      grounding: {
+        snapshot_ref: 'a'.repeat(32),
+        camera: 'scene_camera',
+        box_normalized: [0.2, 0.1, 0.7, 0.5],
+      },
+    });
+    expect(result.params.target).toEqual({
+      label: 'unknown metal part',
+      ref: 'grounded-part',
+    });
+    expect(needsPrimitiveGrounding(result)).toBe(false);
+  });
 });

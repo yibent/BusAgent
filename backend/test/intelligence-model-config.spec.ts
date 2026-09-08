@@ -39,6 +39,7 @@ describe('private model profiles', () => {
     );
     const draft = await models.publicSettings();
     draft.fallbacks.planner = [];
+    draft.fallbacks.task = [];
     draft.fallbacks.supervisor = [];
     draft.fallbacks.visual = [];
     await models.save(draft, false, ['gemini-38-flash']);
@@ -132,6 +133,7 @@ describe('private model profiles', () => {
     settings.roles.visual = 'gemini-37-flash';
     settings.fallbacks.visual = ['gemini-38-flash'];
     settings.nodeTimeouts.visual = 5000;
+    settings.nodeFirstTokenTimeouts.visual = 5000;
     settings.performance.providerCooldownEnabled = false;
     await models.save(settings);
     expect((await models.profilesFor('planner')).map((p) => p.id)).toEqual([
@@ -157,6 +159,40 @@ describe('private model profiles', () => {
     expect(completionsUrl('https://model.test/custom/v1/')).toBe(
       'https://model.test/custom/v1/chat/completions',
     );
+  });
+  it('supports disabled, same-capability and compatible ordered fallbacks', async () => {
+    const settings = await models.publicSettings();
+    settings.roles.planner = 'gemini-37-flash';
+    settings.fallbacks.planner = ['deepseek-v4-flash-0731', 'gemini-38-flash'];
+    settings.fallbackPolicies.planner = 'same_capability';
+    await models.save(settings);
+    expect((await models.profilesFor('planner')).map((p) => p.id)).toEqual([
+      'gemini-37-flash',
+      'gemini-38-flash',
+    ]);
+    const compatible = await models.publicSettings();
+    compatible.fallbackPolicies.planner = 'ordered_compatible';
+    await models.save(compatible);
+    expect((await models.profilesFor('planner')).map((p) => p.id)).toEqual([
+      'gemini-37-flash',
+      'deepseek-v4-flash-0731',
+      'gemini-38-flash',
+    ]);
+    const disabled = await models.publicSettings();
+    disabled.fallbackPolicies.planner = 'disabled';
+    await models.save(disabled);
+    expect((await models.profilesFor('planner')).map((p) => p.id)).toEqual([
+      'gemini-37-flash',
+    ]);
+  });
+  it('gives image planning a longer configurable first-token window than fast routing', async () => {
+    expect((await models.profile('task')).firstTokenTimeoutMs).toBe(8000);
+    expect((await models.profile('planner')).firstTokenTimeoutMs).toBe(30000);
+    expect((await models.profile('planner')).timeoutMs).toBeGreaterThanOrEqual(30000);
+    const settings = await models.publicSettings();
+    settings.nodeFirstTokenTimeouts.planner = 18000;
+    await models.save(settings);
+    expect((await models.profile('planner')).firstTokenTimeoutMs).toBe(18000);
   });
   it('preserves provider tool signature metadata when continuing an inference', async () => {
     const message = {
@@ -208,5 +244,67 @@ describe('private model profiles', () => {
     ) as Record<string, unknown>;
     expect(body.thinking).toEqual({ type: 'disabled' });
     expect(body).not.toHaveProperty('enable_thinking');
+  });
+  it('uses a real streaming request and reconstructs streamed tool arguments', async () => {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"submit_","arguments":"{\\"ok\\":"}}]}}]}\n\n',
+          ),
+        );
+        controller.enqueue(
+          encoder.encode(
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"plan","arguments":"true}"}}]}}],"usage":{"total_tokens":9}}\n\ndata: [DONE]\n\n',
+          ),
+        );
+        controller.close();
+      },
+    });
+    const request = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(stream, { headers: { 'content-type': 'text/event-stream' } }),
+      );
+    vi.stubGlobal('fetch', request);
+    const answer = await complete(await models.profile('planner'), [], []);
+    expect(answer.message.tool_calls?.[0]?.function).toEqual({
+      name: 'submit_plan',
+      arguments: '{"ok":true}',
+    });
+    expect(answer.usage.total_tokens).toBe(9);
+    expect(answer.first_token_ms).toBeTypeOf('number');
+    expect(
+      JSON.parse((request.mock.calls[0]![1] as RequestInit).body as string),
+    ).toMatchObject({ stream: true, stream_options: { include_usage: true } });
+  });
+  it('aborts a provider that does not produce its first streamed token in time', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_url, init) =>
+          new Promise((_resolve, reject) => {
+            const signal = (init as RequestInit).signal!;
+            signal.addEventListener(
+              'abort',
+              () =>
+                reject(
+                  signal.reason instanceof Error
+                    ? signal.reason
+                    : new Error(String(signal.reason)),
+                ),
+              { once: true },
+            );
+          }),
+      ),
+    );
+    await expect(
+      complete(
+        { ...(await models.profile('planner')), firstTokenTimeoutMs: 10 },
+        [],
+        [],
+      ),
+    ).rejects.toThrow('模型首字响应超时');
   });
 });

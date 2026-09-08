@@ -14,17 +14,22 @@ export const profileSchema = z.object({
   model: z.string().min(1),
   apiKey: z.string().default(''),
   vision: z.boolean().default(true),
+  /** The provider can return normalized object/region boxes from an image. */
+  boxGrounding: z.boolean().optional(),
   thinking: z.boolean().default(false),
   reasoningEffort: z.enum(['minimal', 'low', 'medium', 'high', 'max']).optional(),
   peerGroup: z.string().min(1).optional(),
   enabled: z.boolean().default(true),
   timeoutMs: z.number().int().min(1000).max(120000).optional(),
+  firstTokenTimeoutMs: z.number().int().min(1000).max(120000).optional(),
   cooldownEnabled: z.boolean().optional(),
 });
 export type ModelProfile = z.infer<typeof profileSchema>;
 const configSchema = z.object({
   profiles: z.array(profileSchema).min(1),
   roles: z.object({
+    /** Cheap text-only routing and complete simple plans. Falls back to planner. */
+    task: z.string().optional(),
     planner: z.string(),
     supervisor: z.string(),
     dialogue: z.string().optional(),
@@ -33,6 +38,7 @@ const configSchema = z.object({
   fallbacks: z
     .object({
       planner: z.array(z.string()).default([]),
+      task: z.array(z.string()).optional(),
       supervisor: z.array(z.string()).default([]),
       dialogue: z.array(z.string()).optional(),
       visual: z.array(z.string()).optional(),
@@ -41,12 +47,32 @@ const configSchema = z.object({
   nodeTimeouts: z
     .object({
       planner: z.number().int().min(1000).max(120000).optional(),
+      task: z.number().int().min(1000).max(120000).optional(),
       supervisor: z.number().int().min(1000).max(120000).optional(),
       dialogue: z.number().int().min(1000).max(120000).optional(),
       visual: z.number().int().min(1000).max(120000).optional(),
       perception: z.number().int().min(1000).max(120000).optional(),
     })
     .default({}),
+  nodeFirstTokenTimeouts: z
+    .object({
+      task: z.number().int().min(1000).max(120000).optional(),
+      planner: z.number().int().min(1000).max(120000).optional(),
+      supervisor: z.number().int().min(1000).max(120000).optional(),
+      dialogue: z.number().int().min(1000).max(120000).optional(),
+      visual: z.number().int().min(1000).max(120000).optional(),
+    })
+    .optional(),
+  fallbackPolicies: z
+    .object({
+      task: z.enum(['disabled', 'same_capability', 'ordered_compatible']).optional(),
+      planner: z.enum(['disabled', 'same_capability', 'ordered_compatible']).optional(),
+      supervisor: z
+        .enum(['disabled', 'same_capability', 'ordered_compatible'])
+        .optional(),
+      visual: z.enum(['disabled', 'same_capability', 'ordered_compatible']).optional(),
+    })
+    .optional(),
   dialogueRouting: z
     .object({
       activeProfile: z.string(),
@@ -61,6 +87,7 @@ const configSchema = z.object({
     .object({
       lookahead: z.boolean().default(true),
       requestTimeoutMs: z.number().int().min(1000).max(120000).default(20000),
+      firstTokenTimeoutMs: z.number().int().min(1000).max(120000).optional(),
       planningBudgetMs: z.number().int().min(5000).max(300000).default(60000),
       toolRounds: z.number().int().min(1).max(16).default(6),
       contextBudgetTokens: z.number().int().min(6000).max(128000).optional(),
@@ -71,9 +98,17 @@ const configSchema = z.object({
   images: z.boolean().default(true),
   supervisorEnabled: z.boolean().default(true),
   recoveryBudget: z.number().int().min(1).max(20).default(3),
+  architecture: z
+    .object({
+      mode: z.enum(['legacy', 'staged']).default('staged'),
+      stageRetryLimit: z.number().int().min(1).max(8).default(2),
+      finalReviewLimit: z.number().int().min(1).max(4).default(2),
+      finalReview: z.boolean().default(true),
+    })
+    .optional(),
 });
 export type ModelSettings = z.infer<typeof configSchema>;
-export type ModelRole = Role | 'visual';
+export type ModelRole = Role | 'visual' | 'task';
 export interface DialogueAttempt {
   profile: ModelProfile;
   generation: number;
@@ -92,6 +127,19 @@ const dialogueState = (s: ModelSettings): DialogueRouting =>
     consecutiveFailures: 0,
     generation: 0,
   };
+type RoutedRole = ModelRole;
+const defaultFallbackPolicy = (role: RoutedRole) =>
+  role === 'task' ? 'ordered_compatible' : 'same_capability';
+const effectiveFirstTokenTimeout = (
+  settings: ModelSettings,
+  role: ModelRole | 'dialogue',
+  profile: ModelProfile,
+) =>
+  settings.nodeFirstTokenTimeouts?.[role] ??
+  profile.firstTokenTimeoutMs ??
+  (profile.vision && ['planner', 'supervisor', 'visual'].includes(role)
+    ? 30000
+    : (settings.performance.firstTokenTimeoutMs ?? 8000));
 export function completionsUrl(base: string): string {
   const url = new URL(base);
   url.pathname =
@@ -124,6 +172,7 @@ export class ModelConfig {
             model: 'gemini-3.7-flash',
             apiKey: process.env.GEMINI_PRIMARY_API_KEY ?? '',
             peerGroup: 'gemini-flash',
+            boxGrounding: true,
             reasoningEffort: 'low',
             thinking: true,
           },
@@ -135,6 +184,7 @@ export class ModelConfig {
             model: 'gemini-3.8-flash',
             apiKey: process.env.GEMINI_SECONDARY_API_KEY ?? '',
             peerGroup: 'gemini-flash',
+            boxGrounding: true,
             reasoningEffort: 'low',
             thinking: true,
           },
@@ -155,11 +205,13 @@ export class ModelConfig {
           })),
         ],
         roles: {
+          task: 'gemini-37-flash',
           planner: 'gemini-37-flash',
           supervisor: 'gemini-37-flash',
           dialogue: 'qwen3-8-flash',
         },
         fallbacks: {
+          task: ['gemini-38-flash'],
           planner: ['gemini-38-flash'],
           supervisor: ['gemini-38-flash'],
           dialogue: [
@@ -170,23 +222,47 @@ export class ModelConfig {
         },
       });
     }
+    this.cache.architecture ??= {
+      mode: 'staged',
+      stageRetryLimit: 2,
+      finalReviewLimit: 2,
+      finalReview: true,
+    };
+    this.cache.performance.firstTokenTimeoutMs ??= 8000;
     return structuredClone(this.cache);
   }
   async publicSettings() {
     const settings = await this.settings();
     return {
       ...settings,
+      nodeFirstTokenTimeouts: settings.nodeFirstTokenTimeouts ?? {},
+      architecture: settings.architecture ?? {
+        mode: 'staged',
+        stageRetryLimit: 2,
+        finalReviewLimit: 2,
+        finalReview: true,
+      },
+      fallbackPolicies: {
+        task: settings.fallbackPolicies?.task ?? defaultFallbackPolicy('task'),
+        planner: settings.fallbackPolicies?.planner ?? defaultFallbackPolicy('planner'),
+        supervisor:
+          settings.fallbackPolicies?.supervisor ?? defaultFallbackPolicy('supervisor'),
+        visual: settings.fallbackPolicies?.visual ?? defaultFallbackPolicy('visual'),
+      },
       roles: {
         ...settings.roles,
+        task: settings.roles.task || settings.roles.planner,
         visual: settings.roles.visual || settings.roles.planner,
       },
       fallbacks: {
         ...settings.fallbacks,
+        task: settings.fallbacks.task ?? settings.fallbacks.planner,
         visual: settings.fallbacks.visual ?? settings.fallbacks.planner,
       },
       dialogueRouting: dialogueState(settings),
       profiles: settings.profiles.map(({ apiKey, ...p }) => ({
         ...p,
+        boxGrounding: p.boxGrounding ?? (p.provider === 'gemini' && p.vision),
         configured: Boolean(apiKey),
       })),
     };
@@ -198,40 +274,67 @@ export class ModelConfig {
     const id =
       role === 'visual'
         ? settings.roles.visual || settings.roles.planner
-        : settings.roles[role];
+        : role === 'task'
+          ? settings.roles.task || settings.roles.planner
+          : settings.roles[role];
     const profile = settings.profiles.find((p) => p.id === id);
     if (!profile?.enabled || !profile.apiKey)
       throw new Error(`${role} 模型尚未启用或缺少 API Key，请在模型设置中配置。`);
+    const tokenTimeout = effectiveFirstTokenTimeout(settings, role, profile);
     return {
       ...profile,
-      timeoutMs:
+      boxGrounding:
+        profile.boxGrounding ?? (profile.provider === 'gemini' && profile.vision),
+      timeoutMs: Math.max(
+        tokenTimeout,
         settings.nodeTimeouts?.[role] ??
-        profile.timeoutMs ??
-        settings.performance.requestTimeoutMs,
+          profile.timeoutMs ??
+          settings.performance.requestTimeoutMs,
+      ),
+      firstTokenTimeoutMs: tokenTimeout,
       cooldownEnabled: settings.performance.providerCooldownEnabled,
     };
   }
   async profilesFor(role: ModelRole): Promise<ModelProfile[]> {
     const settings = await this.settings();
     const primary = await this.profile(role);
+    const policy = settings.fallbackPolicies?.[role] ?? defaultFallbackPolicy(role);
     const ids = [
       primary.id,
-      ...(role === 'visual'
-        ? (settings.fallbacks.visual ?? settings.fallbacks.planner)
-        : settings.fallbacks[role]),
+      ...(policy === 'disabled'
+        ? []
+        : role === 'visual'
+          ? (settings.fallbacks.visual ?? settings.fallbacks.planner)
+          : role === 'task'
+            ? (settings.fallbacks.task ?? settings.fallbacks.planner)
+            : settings.fallbacks[role]),
     ];
     return [...new Set(ids)].flatMap((id) => {
       const p = settings.profiles.find(
         (row) => row.id === id && row.enabled && row.apiKey,
       );
+      const boxGrounding =
+        p?.boxGrounding ?? (p?.provider === 'gemini' && p?.vision === true);
+      if (
+        !p ||
+        (policy === 'same_capability' &&
+          (p.vision !== primary.vision ||
+            (primary.boxGrounding === true && boxGrounding !== true)))
+      )
+        return [];
+      const tokenTimeout = effectiveFirstTokenTimeout(settings, role, p);
       return p
         ? [
             {
               ...p,
-              timeoutMs:
+              boxGrounding,
+              timeoutMs: Math.max(
+                tokenTimeout,
                 settings.nodeTimeouts?.[role] ??
-                p.timeoutMs ??
-                settings.performance.requestTimeoutMs,
+                  p.timeoutMs ??
+                  settings.performance.requestTimeoutMs,
+              ),
+              firstTokenTimeoutMs: tokenTimeout,
               cooldownEnabled: settings.performance.providerCooldownEnabled,
             },
           ]
@@ -245,13 +348,17 @@ export class ModelConfig {
       (p) => p.id === state.activeProfile && p.enabled && p.apiKey,
     );
     if (!profile) throw new Error('即时回答渠道未配置，请在模型设置中选择默认渠道。');
+    const tokenTimeout = effectiveFirstTokenTimeout(settings, 'dialogue', profile);
     return {
       profile: {
         ...profile,
-        timeoutMs:
+        timeoutMs: Math.max(
+          tokenTimeout,
           settings.nodeTimeouts?.dialogue ??
-          profile.timeoutMs ??
-          settings.performance.requestTimeoutMs,
+            profile.timeoutMs ??
+            settings.performance.requestTimeoutMs,
+        ),
+        firstTokenTimeoutMs: tokenTimeout,
         cooldownEnabled: settings.performance.providerCooldownEnabled,
       },
       generation: state.generation,

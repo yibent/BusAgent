@@ -25,7 +25,29 @@ function observedCandidates(packet: Record<string, unknown>) {
 export const needsPrimitiveGrounding = (action: Action) =>
   ['grasp', 'pick_place', 'place_held'].includes(action.skill) &&
   (object(action.params.target).selection === 'any' ||
-    object(action.params.destination).instance_selection === 'any');
+    object(action.params.destination).instance_selection === 'any' ||
+    Object.keys(object(object(action.params.target).grounding)).length > 0 ||
+    Object.keys(object(object(action.params.destination).grounding)).length > 0);
+
+function normalizedGrounding(choice: Record<string, unknown>) {
+  const grounding = object(choice.grounding);
+  const box = grounding.box_2d;
+  if (
+    typeof grounding.snapshot_ref !== 'string' ||
+    typeof grounding.camera !== 'string' ||
+    !Array.isArray(box) ||
+    box.length !== 4 ||
+    box.some((value) => typeof value !== 'number' || value < 0 || value > 1000)
+  )
+    return undefined;
+  const [y0, x0, y1, x1] = box as [number, number, number, number];
+  if (x1 <= x0 || y1 <= y0) return undefined;
+  return {
+    snapshot_ref: grounding.snapshot_ref,
+    camera: grounding.camera,
+    box_normalized: [x0 / 1000, y0 / 1000, x1 / 1000, y1 / 1000],
+  };
+}
 
 /** Resolve user-permitted choices immediately before dispatch. No LLM or asset
  * catalogue is involved; explicit refs, cells and orientation are preserved. */
@@ -48,22 +70,32 @@ export async function groundPrimitive(
   if (visionMode === 'fast') recover = undefined;
   for (const field of ['target', 'destination'] as const) {
     const choice = object(result.params[field]);
+    const grounding = normalizedGrounding(choice);
     const permitted =
       field === 'target'
-        ? choice.selection === 'any'
-        : choice.instance_selection === 'any';
+        ? choice.selection === 'any' || grounding !== undefined
+        : choice.instance_selection === 'any' || grounding !== undefined;
     if (!permitted || choice.ref || choice.cell_ref || choice.region_ref) continue;
     if (typeof choice.label !== 'string' || !choice.label.trim())
       throw new Error('任选目标仍需指定视觉类别。');
-    const packet = await observe({
-      scope: 'target',
-      category: choice.label,
-      selection: 'all',
-      vision_mode: visionMode,
-    });
+    const packet = await observe(
+      grounding
+        ? {
+            scope: 'target',
+            category: choice.label,
+            selection: 'one',
+            grounding,
+          }
+        : {
+            scope: 'target',
+            category: choice.label,
+            selection: 'all',
+            vision_mode: visionMode,
+          },
+    );
     // Instance collections already merge views of the same physical object.
     let candidates = observedCandidates(packet);
-    if (!candidates.length) {
+    if (!candidates.length && !grounding) {
       // Recall learned visual identity, then re-localize it in a fresh frame.
       // A remembered/stale box is never sent directly to physical execution.
       for (const known of remembered.map(object)) {
@@ -80,13 +112,14 @@ export async function groundPrimitive(
         candidates.push(...observedCandidates(current));
       }
     }
-    if (!candidates.length && recover)
+    if (!candidates.length && recover && !grounding)
       candidates = observedCandidates(await recover(choice.label, field));
     candidates.sort((a, b) => Number(b.score ?? 0) - Number(a.score ?? 0));
     const selected = candidates[0];
     if (!selected)
       throw new Error(`本次观察未定位到可选择的 ${choice.label}；未下发机械动作。`);
     const bound: Record<string, unknown> = { ...choice, ref: selected.ref };
+    delete bound.grounding;
     if (field === 'target') {
       delete bound.selection;
     }

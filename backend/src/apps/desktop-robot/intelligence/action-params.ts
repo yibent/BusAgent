@@ -22,6 +22,26 @@ const selector = {
           type: 'string',
           enum: ['nearest', 'left', 'right', 'near', 'far', 'center', 'compact'],
         },
+        grounding: {
+          type: 'object',
+          additionalProperties: false,
+          description:
+            '模型在指定冻结图像中选择的区域；执行前必须经SAM2和深度绑定为当前物体ref。',
+          properties: {
+            snapshot_ref: { type: 'string', pattern: '^[a-f0-9]{32}$' },
+            camera: {
+              type: 'string',
+              enum: ['scene_camera', 'side_camera', 'wrist_camera'],
+            },
+            box_2d: {
+              type: 'array',
+              items: { type: 'number', minimum: 0, maximum: 1000 },
+              minItems: 4,
+              maxItems: 4,
+            },
+          },
+          required: ['snapshot_ref', 'camera', 'box_2d'],
+        },
       },
     },
   ],
