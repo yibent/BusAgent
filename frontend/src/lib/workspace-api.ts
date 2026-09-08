@@ -5,6 +5,18 @@ export interface ScenePreset {
   kind: string;
   count?: number;
   active?: boolean;
+  examples?: string[];
+}
+export interface WorkspaceLifecycle {
+  epoch: string;
+  scene_id: string;
+  scenes: ScenePreset[];
+  operation: null | {
+    id: string;
+    scene_id: string;
+    phase: string;
+    message: string;
+  };
 }
 export interface SceneObject {
   id: string;
@@ -40,30 +52,9 @@ export interface WorkspaceState {
     max_steps: number;
   };
   camera?: { width: number; height: number };
+  lifecycle?: WorkspaceLifecycle;
 }
-export const presets: ScenePreset[] = [
-  {
-    id: "initial",
-    name: "基础抓放",
-    description: "在开放工作台上练习拿取、转移与放置。",
-    kind: "pick",
-    count: 3,
-  },
-  {
-    id: "sorting",
-    name: "桌面整理",
-    description: "分散摆放桌面物体，观察连续任务的执行。",
-    kind: "sort",
-    count: 3,
-  },
-  {
-    id: "precision",
-    name: "精确摆放",
-    description: "紧凑的目标布局，用于定位与堆叠实验。",
-    kind: "stack",
-    count: 3,
-  },
-];
+export const presets: ScenePreset[] = [];
 const base = (import.meta.env.VITE_ARENA_HTTP_URL ?? "").replace(/\/$/, "");
 export const arenaUrl = (path: string) => `${base}${path}`;
 export async function request<T>(
@@ -97,12 +88,24 @@ export async function request<T>(
   return data as T;
 }
 export async function getWorkspace(): Promise<WorkspaceState> {
+  const lifecycle = await request<WorkspaceLifecycle>(
+    "/v1/workspace/status",
+  ).catch(() => undefined);
   try {
     return {
       ...(await request<WorkspaceState>("/api/workspace")),
       available: true,
+      ...(lifecycle ? { lifecycle, scenes: lifecycle.scenes } : {}),
     };
   } catch {
+    if (lifecycle)
+      return {
+        available: false,
+        lifecycle,
+        scene_id: lifecycle.scene_id,
+        scenes: lifecycle.scenes,
+        objects: [],
+      };
     const capabilities = await request<{
       objects?: Record<string, unknown>[];
       destinations?: Record<string, unknown>[];
@@ -139,6 +142,15 @@ export async function getWorkspace(): Promise<WorkspaceState> {
     };
   }
 }
+
+export async function transitionWorkspace(scene_id: string, token: string) {
+  return request<WorkspaceLifecycle>("/v1/workspace/transition", {
+    scene_id,
+    token,
+    request_id: crypto.randomUUID(),
+  });
+}
+
 export async function runCommand(
   skill: string,
   params: Record<string, unknown> = {},

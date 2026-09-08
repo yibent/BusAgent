@@ -136,7 +136,7 @@ export function SceneBrowser({
         <div>
           <div className="eyebrow">WORKSPACE / SCENES</div>
           <h1>从一个场景开始。</h1>
-          <p>选择工作台，连接机械臂，开始你的下一次实验。</p>
+          <p>选择独立工业场景；确认后清空当前场景历史并重新加载。</p>
         </div>
         <Button variant="outline" size="sm" onClick={onRefresh}>
           <RefreshCw />
@@ -165,15 +165,22 @@ export function SceneBrowser({
           >
             <div className="scene-art">
               <SceneDiagram kind={scene.kind} />
-              {scene.kind === "live" && (
-                <img
-                  src={arenaUrl("/api/frame/scene.jpg")}
-                  alt="当前工作台画面"
-                  onError={(e) => {
-                    e.currentTarget.style.display = "none";
-                  }}
-                />
-              )}
+              <img
+                src={
+                  scene.kind === "live"
+                    ? arenaUrl("/api/frame/scene.jpg")
+                    : `/scenes/${scene.id}.jpg`
+                }
+                alt={
+                  scene.kind === "live"
+                    ? "当前工作台画面"
+                    : `${scene.name}初始场景实拍`
+                }
+                loading="lazy"
+                onError={(e) => {
+                  e.currentTarget.style.display = "none";
+                }}
+              />
               <span className="scene-index">
                 {String(index + 1).padStart(2, "0")}
               </span>
@@ -189,6 +196,9 @@ export function SceneBrowser({
                 <ArrowUpRight size={16} />
               </div>
               <p>{scene.description}</p>
+              {scene.examples?.[0] && (
+                <p className="scene-example">试着说：{scene.examples[0]}</p>
+              )}
               <footer>
                 <span>
                   <Box size={12} />
@@ -201,7 +211,7 @@ export function SceneBrowser({
                       运行中
                     </>
                   ) : (
-                    "预设布局"
+                    `${scene.count ?? 0} 个工件与工装`
                   )}
                 </span>
               </footer>
@@ -218,7 +228,7 @@ export function SceneBrowser({
           <p>
             {chosen
               ? !workspace?.available && chosen.id !== "current"
-                ? "此预设需仿真端启用场景接口。可先连接当前工作台。"
+                ? "场景服务正在准备，请稍候。"
                 : "进入后可查看实时画面、发出任务并浏览执行时间轴。"
               : "场景配置和执行记录将在同一个工作区中呈现。"}
           </p>
@@ -233,7 +243,8 @@ export function SceneBrowser({
           }
           className="enter-button"
         >
-          {loading ? <Loader2 className="animate-spin" /> : null}进入仿真
+          {loading ? <Loader2 className="animate-spin" /> : null}
+          {chosen?.id === workspace?.scene_id ? "进入当前场景" : "切换并进入"}
           <ArrowUpRight size={16} />
         </Button>
       </div>

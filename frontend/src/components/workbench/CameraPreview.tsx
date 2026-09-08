@@ -172,6 +172,12 @@ export function CameraPreview({
             <DropdownMenuContent align="end">
               <DropdownMenuItem
                 disabled={!canEdit}
+                onSelect={() => onReset("full")}
+              >
+                完全重置当前场景
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={!canEdit}
                 onSelect={() => onReset("all")}
               >
                 物体与机械臂
@@ -191,7 +197,9 @@ export function CameraPreview({
               <DropdownMenuItem onSelect={() => onReset("home")}>
                 机械臂回到待机位置
               </DropdownMenuItem>
-              <DropdownMenuItem disabled>时间轴不会自动清空</DropdownMenuItem>
+              <DropdownMenuItem disabled>
+                完全重置会清空当前场景历史
+              </DropdownMenuItem>
               <DropdownMenuItem disabled>
                 {canEdit
                   ? "恢复所选场景的初始状态"

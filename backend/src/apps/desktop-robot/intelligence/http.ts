@@ -1,6 +1,7 @@
 import { ModelConfig } from './model-config.js';
 import { complete, type Message } from './model-client.js';
 import { TaskEngine } from './task-engine.js';
+import { submitWorkspaceTransition, workspaceStatus } from './workspace-lifecycle.js';
 
 interface Reply {
   code(status: number): Reply;
@@ -51,6 +52,23 @@ export function intelligenceRoutes(
   app.get(
     '/v1/tasks',
     route(() => engine.snapshot()),
+  );
+  app.get(
+    '/v1/workspace/status',
+    route(() => workspaceStatus()),
+  );
+  app.post(
+    '/v1/workspace/transition',
+    route((request) =>
+      submitWorkspaceTransition(
+        request.body as {
+          token?: unknown;
+          scene_id?: unknown;
+          request_id?: unknown;
+        },
+        models,
+      ),
+    ),
   );
   app.post(
     '/v1/tasks/control',

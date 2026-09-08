@@ -1,9 +1,10 @@
 import { IntelligencePanel } from "@/components/workbench/IntelligencePanel";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Boxes,
   CircleHelp,
   LayoutPanelTop,
+  Loader2,
   Settings2,
   Trophy,
   X,
@@ -30,7 +31,11 @@ import { Inspector, type InspectorTab } from "@/components/workbench/Inspector";
 import { Timeline } from "@/components/workbench/Timeline";
 import { VoiceOrb } from "@/components/workbench/VoiceOrb";
 import { Logo } from "@/components/workbench/Logo";
-import { editWorkspace, runCommand } from "@/lib/workspace-api";
+import {
+  editWorkspace,
+  runCommand,
+  transitionWorkspace,
+} from "@/lib/workspace-api";
 import type { TimelineClip } from "@/lib/timeline";
 import "@/workbench.css";
 import {
@@ -42,7 +47,9 @@ export function WorkbenchPage() {
   const robot = useRobotStatus();
   const { workspace, error, refresh } = useWorkspace();
   const [page, setPage] = useState<"review" | "scenes" | "simulation">(
-    "review",
+    new URLSearchParams(window.location.search).has("workspace")
+      ? "simulation"
+      : "review",
   );
   const [reviewStep, setReviewStep] = useState(0);
   const [selectedScene, setSelectedScene] = useState<string | null>(null);
@@ -59,6 +66,44 @@ export function WorkbenchPage() {
   const [help, setHelp] = useState(false);
   const [layoutVersion, setLayoutVersion] = useState(0);
   const [queuePaused, setQueuePaused] = useState<boolean | null>(null);
+  const [confirmation, setConfirmation] = useState<{
+    scene: string;
+    fullReset: boolean;
+  } | null>(null);
+  const [adminToken, setAdminToken] = useState("");
+  const [submittingTransition, setSubmittingTransition] = useState(false);
+  const knownEpoch = useRef<string | null>(null);
+  const lifecycle = workspace?.lifecycle;
+  const operation = lifecycle?.operation;
+  const transitioning =
+    !!operation && !["completed", "failed"].includes(operation.phase);
+  useEffect(() => {
+    if (!lifecycle) return;
+    if (knownEpoch.current === null) knownEpoch.current = lifecycle.epoch;
+    else if (
+      knownEpoch.current !== lifecycle.epoch &&
+      operation?.phase === "completed"
+    ) {
+      sessionStorage.clear();
+      window.location.replace("/?workspace=1");
+    }
+  }, [lifecycle, operation]);
+  const confirmTransition = async () => {
+    if (!confirmation || !adminToken.trim()) return;
+    setSubmittingTransition(true);
+    try {
+      await transitionWorkspace(confirmation.scene, adminToken.trim());
+      setConfirmation(null);
+      await refresh();
+    } catch (e) {
+      setNotice({
+        text: e instanceof Error ? e.message : "场景切换未完成",
+        error: true,
+      });
+    } finally {
+      setSubmittingTransition(false);
+    }
+  };
   useEffect(() => {
     const abort = new AbortController();
     const update = async () => {
@@ -103,19 +148,8 @@ export function WorkbenchPage() {
   const enterScene = async () => {
     if (!selectedScene || !workspace) return;
     if (selectedScene !== workspace.scene_id) {
-      setBusy(true);
-      try {
-        await editWorkspace("scene", { scene_id: selectedScene });
-        await refresh();
-      } catch (e) {
-        setNotice({
-          text: e instanceof Error ? e.message : "场景载入失败",
-          error: true,
-        });
-        setBusy(false);
-        return;
-      }
-      setBusy(false);
+      setConfirmation({ scene: selectedScene, fullReset: false });
+      return;
     }
     setEnteredScene(selectedScene);
     if (page === "review") setReviewStep(8);
@@ -132,7 +166,11 @@ export function WorkbenchPage() {
         workspace={workspace}
         error={error}
         selected={selectedScene}
-        onSelect={setSelectedScene}
+        onSelect={(id) => {
+          setSelectedScene(id);
+          if (id !== workspace?.scene_id)
+            setConfirmation({ scene: id, fullReset: false });
+        }}
         onEnter={() => void enterScene()}
         loading={busy}
         onRefresh={() => void refresh()}
@@ -204,7 +242,15 @@ export function WorkbenchPage() {
                           setNotice({ text: e.message, error: true }),
                         );
                     }}
-                    onReset={(scope) =>
+                    onReset={(scope) => {
+                      if (scope === "full") {
+                        if (workspace?.scene_id)
+                          setConfirmation({
+                            scene: workspace.scene_id,
+                            fullReset: true,
+                          });
+                        return;
+                      }
                       void perform(
                         () =>
                           scope === "home"
@@ -213,8 +259,8 @@ export function WorkbenchPage() {
                         scope === "home"
                           ? "机械臂已回到待机位置。"
                           : "初始状态已恢复，时间轴保留。",
-                      )
-                    }
+                      );
+                    }}
                   />
                 </ResizablePanel>
               </ResizablePanelGroup>
@@ -399,6 +445,85 @@ export function WorkbenchPage() {
           page={intelligencePage}
           onClose={() => setIntelligencePage(null)}
         />
+        <Dialog
+          open={!!confirmation || transitioning || submittingTransition}
+          onOpenChange={(open) => {
+            if (!open && !transitioning && !submittingTransition)
+              setConfirmation(null);
+          }}
+        >
+          <DialogContent
+            onEscapeKeyDown={(event) => {
+              if (transitioning || submittingTransition) event.preventDefault();
+            }}
+            onInteractOutside={(event) => {
+              if (transitioning || submittingTransition) event.preventDefault();
+            }}
+          >
+            <DialogTitle>
+              {transitioning || submittingTransition
+                ? "正在准备工作台"
+                : confirmation?.fullReset
+                  ? "完全重置当前场景？"
+                  : `切换到“${workspace?.scenes.find((scene) => scene.id === confirmation?.scene)?.name ?? ""}”？`}
+            </DialogTitle>
+            <DialogDescription>
+              {transitioning
+                ? operation?.message
+                : "确认后会停止当前执行，清空当前场景的任务、对话、上下文、记忆、视觉缓存和仿真输出，然后重新加载所选场景。程序、模型、API 设置和服务日志保留。"}
+            </DialogDescription>
+            {transitioning || submittingTransition ? (
+              <p role="status" className="flex items-center gap-2">
+                <Loader2 className="animate-spin" size={18} />
+                场景与模型正在重新初始化，完成后自动进入。
+              </p>
+            ) : (
+              <>
+                <label>
+                  管理令牌
+                  <input
+                    className="ui-input"
+                    aria-label="场景切换管理令牌"
+                    type="password"
+                    autoComplete="off"
+                    value={adminToken}
+                    onChange={(event) => setAdminToken(event.target.value)}
+                    placeholder="与模型设置使用同一管理令牌"
+                  />
+                </label>
+                <div className="flex justify-end gap-3">
+                  <Button
+                    variant="outline"
+                    onClick={() => setConfirmation(null)}
+                  >
+                    取消
+                  </Button>
+                  <Button
+                    disabled={!adminToken.trim()}
+                    onClick={() => void confirmTransition()}
+                  >
+                    {confirmation?.fullReset ? "清空并重新加载" : "清空并切换"}
+                  </Button>
+                </div>
+              </>
+            )}
+          </DialogContent>
+        </Dialog>
+        {operation?.phase === "failed" && (
+          <div className="app-notice error" role="alert">
+            <span>{operation.message}</span>
+            <Button
+              onClick={() =>
+                setConfirmation({
+                  scene: operation.scene_id,
+                  fullReset: operation.scene_id === workspace?.scene_id,
+                })
+              }
+            >
+              重试
+            </Button>
+          </div>
+        )}
         <Dialog open={help} onOpenChange={setHelp}>
           <DialogContent>
             <DialogTitle>
@@ -420,7 +545,7 @@ export function WorkbenchPage() {
                 点击悬浮球开始说话，再次点击结束。悬停或用键盘聚焦悬浮球，可打开文字输入；对话可在左侧面板查看。
               </p>
               <p>
-                重置恢复所选场景的初始状态。时间轴保留在当前页面，需要时可直接清空；刷新页面后重新开始记录。
+                物体或机械臂局部复位只重建仿真状态并保留任务记录。场景切换和完全重置会在管理令牌校验后清空当前场景历史并重新加载。
               </p>
             </div>
           </DialogContent>
