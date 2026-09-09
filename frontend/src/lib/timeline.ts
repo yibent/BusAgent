@@ -263,17 +263,31 @@ export function buildTimeline(input: RobotBusEvent[]): TimelineClip[] {
       precise: false,
     });
   }
+  // Completed delivery spans that emitted no domain event are dispatcher
+  // telemetry, not user-visible work. Memory materialization and extractive
+  // context views remain queryable in the inspector/event log, but keeping one
+  // card per update makes the main execution path look like repeated LLM calls.
+  const visibleClips = clips.filter((clip) => {
+    if (clip.state === "failed") return true;
+    if (/^robot\.(memory|context_compression)$/.test(clip.agent)) return false;
+    if (
+      clip.agent === "robot.intelligence" &&
+      clip.events.every((event) => event.eventType.startsWith("node."))
+    )
+      return false;
+    return true;
+  });
   const eventOwner = new Map<string, string>();
-  for (const clip of clips)
+  for (const clip of visibleClips)
     for (const e of clip.events) eventOwner.set(e.id, clip.id);
-  for (const clip of clips) {
+  for (const clip of visibleClips) {
     const trigger = clip.triggerId ? eventById.get(clip.triggerId) : undefined;
     clip.parentId ??=
       trigger?.sourceSpanId ??
       (clip.triggerId ? eventOwner.get(clip.triggerId) : undefined);
     if (clip.parentId === clip.id) clip.parentId = undefined;
   }
-  for (const clip of clips) {
+  for (const clip of visibleClips) {
     clip.events.sort((a, b) => a.createdAt - b.createdAt);
     clip.loop = loopOf(clip.events);
     if (clip.end !== undefined) continue;
@@ -285,7 +299,7 @@ export function buildTimeline(input: RobotBusEvent[]): TimelineClip[] {
       clip.state = "unknown";
     }
   }
-  const ordered = clips.sort((a, b) => a.start - b.start);
+  const ordered = visibleClips.sort((a, b) => a.start - b.start);
   const ends: Record<Track, number[]> = {
     information: [],
     vision: [],

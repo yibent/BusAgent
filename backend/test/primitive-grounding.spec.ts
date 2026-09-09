@@ -89,15 +89,17 @@ describe('late binding for ordinary manipulations', () => {
         },
       });
     const result = await groundPrimitive(request, observe);
-    expect(result.params.target).toEqual({
+    expect(result.params.target).toMatchObject({
       label: 'metal cylinder',
       ref: 'current-part',
+      execution_bound: true,
     });
-    expect(result.params.destination).toEqual({
+    expect(result.params.destination).toMatchObject({
       label: 'bin',
       ref: 'current-bin',
       selection: 'free_space',
       cell_ref: 'empty-cell',
+      execution_bound: true,
     });
     expect(needsPrimitiveGrounding(result)).toBe(false);
     expect(needsPrimitiveGrounding(request)).toBe(true);
@@ -210,9 +212,98 @@ describe('late binding for ordinary manipulations', () => {
         box_normalized: [0.2, 0.1, 0.7, 0.5],
       },
     });
-    expect(result.params.target).toEqual({
+    expect(result.params.target).toMatchObject({
       label: 'unknown metal part',
       ref: 'grounded-part',
+      execution_bound: true,
+    });
+    expect(needsPrimitiveGrounding(result)).toBe(false);
+  });
+  it('inspects an already grounded grid container and binds an empty cell', async () => {
+    const explicit: Action = {
+      title: '把方块放入分格箱', skill: 'pick_place', review_after: false,
+      params: {
+        target: { ref: 'red-block', label: 'red block' },
+        destination: { ref: 'blue-bin', label: 'blue bin', selection: 'free_space' },
+        relation: 'inside',
+      },
+    };
+    const observe = vi.fn().mockResolvedValue({
+      geometry: { kind: 'grid', cells: [
+        { ref: 'occupied', occupancy: 'occupied' },
+        { ref: 'empty-cell', cell_id: 'grid:stable:1:2', occupancy: 'empty' },
+      ] },
+    });
+    const result = await groundPrimitive(explicit, observe);
+    expect(observe).toHaveBeenCalledExactlyOnceWith({
+      ref: 'blue-bin', inspect: 'grid', selection: 'one',
+    });
+    expect(result.params.destination).toMatchObject({
+      ref: 'blue-bin', cell_ref: 'grid:stable:1:2', selection: 'free_space',
+      execution_bound: true,
+    });
+    expect(needsPrimitiveGrounding(result)).toBe(false);
+  });
+  it('re-observes an occluded grid once instead of treating it as an open tray', async () => {
+    const explicit: Action = {
+      title: '把方块放入分格箱', skill: 'pick_place', review_after: false,
+      params: {
+        target: { ref: 'red-block' },
+        destination: { ref: 'blue-bin', selection: 'free_space' },
+        relation: 'inside',
+      },
+    };
+    const observe = vi.fn()
+      .mockResolvedValueOnce({ geometry: { kind: 'grid', status: 'unknown', cells: [] } })
+      .mockResolvedValueOnce({ geometry: { kind: 'grid', status: 'observed', cells: [
+        { occupancy: 'empty', cell_id: 'grid:fresh:1:1' },
+        { occupancy: 'occupied', cell_id: 'grid:fresh:1:2' },
+      ] } });
+    const result = await groundPrimitive(explicit, observe);
+    expect(observe).toHaveBeenCalledTimes(2);
+    expect(result.params.destination).toMatchObject({ cell_ref: 'grid:fresh:1:1' });
+  });
+  it('replaces a planner-supplied transient cell ref before physical dispatch', async () => {
+    const explicit: Action = {
+      title: '把方块放入分格箱', skill: 'pick_place', review_after: false,
+      params: {
+        target: { ref: 'red-block' },
+        destination: {
+          ref: 'blue-bin', selection: 'free_space',
+          cell_ref: `obs:${'a'.repeat(32)}:scene_camera:1`,
+        },
+        relation: 'inside',
+      },
+    };
+    expect(needsPrimitiveGrounding(explicit)).toBe(true);
+    const result = await groundPrimitive(explicit, vi.fn().mockResolvedValue({
+      geometry: { kind: 'grid', status: 'observed', cells: [
+        { occupancy: 'empty', cell_id: 'grid:current:2:3' },
+        { occupancy: 'occupied', cell_id: 'grid:current:1:1' },
+      ] },
+    }));
+    expect(result.params.destination).toMatchObject({
+      ref: 'blue-bin', cell_ref: 'grid:current:2:3',
+    });
+    expect(needsPrimitiveGrounding(result)).toBe(false);
+  });
+  it('refreshes explicit object refs once at the execution boundary', async () => {
+    const stale = `obs:${'a'.repeat(32)}:scene_camera:0`;
+    const current = `obs:${'b'.repeat(32)}:scene_camera:0`;
+    const explicit: Action = {
+      title: '抓取', skill: 'grasp', review_after: false,
+      params: { target: { ref: stale, label: 'red cube' } },
+    };
+    expect(needsPrimitiveGrounding(explicit)).toBe(true);
+    const observe = vi.fn().mockResolvedValue({ references: [
+      { ref: current, kind: 'object', semantic_status: 'candidate' },
+    ] });
+    const result = await groundPrimitive(explicit, observe);
+    expect(observe).toHaveBeenCalledExactlyOnceWith({
+      ref: stale, selection: 'one', vision_mode: 'auto',
+    });
+    expect(result.params.target).toMatchObject({
+      ref: current, execution_bound: true,
     });
     expect(needsPrimitiveGrounding(result)).toBe(false);
   });

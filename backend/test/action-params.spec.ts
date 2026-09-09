@@ -57,6 +57,24 @@ describe('planner to execution parameter contract', () => {
       ).params.relation,
     ).toBe('hang');
   });
+  it('routes inside placement through free-space and grid inspection by default', () => {
+    expect(
+      parse(
+        { target: 'red block', destination: 'blue bin', relation: 'inside' },
+        'pick_place',
+      ).params.destination,
+    ).toEqual({ label: 'blue bin', selection: 'free_space' });
+  });
+  it('does not accept planner-authored execution binding markers', () => {
+    expect(
+      parse({
+        target: { ref, execution_bound: true },
+        destination: { ref, grid_checked: true, execution_bound: true },
+      }).params,
+    ).toMatchObject({ target: { ref }, destination: { ref } });
+    expect(parse({ target: { ref, execution_bound: true }, destination: ref }).params)
+      .not.toHaveProperty('target.execution_bound');
+  });
   it('does not silently execute after dropping incomplete or conflicting orientation', () => {
     expect(() => parse({ target: ref, orientation_axis_ref: ref })).toThrow(
       '完整 orientation',

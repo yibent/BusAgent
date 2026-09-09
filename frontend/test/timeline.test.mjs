@@ -11,6 +11,21 @@ test('old streaming no-op spans do not clutter the timeline; actual interruption
   ]);
   assert.equal(clips.length, 1); assert.equal(clips[0].title, '中断请求');
 });
+test('internal memory maintenance and no-op deliveries do not look like model calls', () => {
+  const clips = buildTimeline([
+    node('a', 'started', 1000, 'A', 'robot.context_compression'),
+    event('compacted', 'context.compacted', 1005, {
+      sourceAgentId: 'robot.context_compression',
+      sourceSpanId: 'A',
+      payload: { model_calls: 0 },
+    }),
+    node('b', 'completed', 1010, 'A', 'robot.context_compression'),
+    node('c', 'started', 1020, 'B', 'robot.intelligence'),
+    node('d', 'completed', 1030, 'B', 'robot.intelligence'),
+    event('intent', 'intent.created', 1040),
+  ]);
+  assert.deepEqual(clips.map((clip) => clip.title), ['收到请求']);
+});
 test('results from old hosts remain instants rather than invented model durations', () => {
   const [clip] = buildTimeline([event('a', 'perception.reported', 5000)]);
   assert.equal(clip.start, 5000); assert.equal(clip.end, 5000); assert.equal(clip.precise, false);

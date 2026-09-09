@@ -21,13 +21,28 @@ function observedCandidates(packet: Record<string, unknown>) {
         (row.kind === undefined || row.kind === 'object'),
     );
 }
+const needsReferenceRefresh = (value: unknown) => {
+  const choice = object(value);
+  return (
+    typeof choice.ref === 'string' &&
+    choice.ref.startsWith('obs:') &&
+    choice.execution_bound !== true
+  );
+};
 
 export const needsPrimitiveGrounding = (action: Action) =>
   ['grasp', 'pick_place', 'place_held'].includes(action.skill) &&
   (object(action.params.target).selection === 'any' ||
     object(action.params.destination).instance_selection === 'any' ||
+    needsReferenceRefresh(action.params.target) ||
+    needsReferenceRefresh(action.params.destination) ||
     Object.keys(object(object(action.params.target).grounding)).length > 0 ||
-    Object.keys(object(object(action.params.destination).grounding)).length > 0);
+    Object.keys(object(object(action.params.destination).grounding)).length > 0 ||
+    (action.params.relation === 'inside' &&
+      object(action.params.destination).selection === 'free_space' &&
+      (!object(action.params.destination).cell_ref ||
+        String(object(action.params.destination).cell_ref).startsWith('obs:')) &&
+      object(action.params.destination).grid_checked !== true));
 
 function normalizedGrounding(choice: Record<string, unknown>) {
   const grounding = object(choice.grounding);
@@ -71,30 +86,58 @@ export async function groundPrimitive(
   for (const field of ['target', 'destination'] as const) {
     const choice = object(result.params[field]);
     const grounding = normalizedGrounding(choice);
+    const needsGrid =
+      field === 'destination' &&
+      result.params.relation === 'inside' &&
+      choice.selection === 'free_space' &&
+      (!choice.cell_ref || String(choice.cell_ref).startsWith('obs:')) &&
+      choice.grid_checked !== true;
+    const needsRefresh = needsReferenceRefresh(choice);
     const permitted =
       field === 'target'
-        ? choice.selection === 'any' || grounding !== undefined
-        : choice.instance_selection === 'any' || grounding !== undefined;
-    if (!permitted || choice.ref || choice.cell_ref || choice.region_ref) continue;
-    if (typeof choice.label !== 'string' || !choice.label.trim())
-      throw new Error('任选目标仍需指定视觉类别。');
-    const packet = await observe(
-      grounding
-        ? {
-            scope: 'target',
-            category: choice.label,
-            selection: 'one',
-            grounding,
-          }
-        : {
-            scope: 'target',
-            category: choice.label,
-            selection: 'all',
-            vision_mode: visionMode,
-          },
-    );
-    // Instance collections already merge views of the same physical object.
-    let candidates = observedCandidates(packet);
+        ? choice.selection === 'any' || grounding !== undefined || needsRefresh
+        : choice.instance_selection === 'any' ||
+          grounding !== undefined ||
+          needsGrid ||
+          needsRefresh;
+    if (
+      !permitted ||
+      (choice.cell_ref && !needsGrid) ||
+      choice.region_ref ||
+      (choice.ref && !needsGrid && !needsRefresh)
+    )
+      continue;
+    let candidates: Record<string, unknown>[];
+    if (needsGrid && typeof choice.ref === 'string') {
+      candidates = [{ ref: choice.ref, kind: 'object' }];
+    } else if (needsRefresh && typeof choice.ref === 'string') {
+      const packet = await observe({
+        ref: choice.ref,
+        selection: 'one',
+        vision_mode: visionMode,
+      });
+      candidates = observedCandidates(packet);
+    } else {
+      if (typeof choice.label !== 'string' || !choice.label.trim())
+        throw new Error('任选目标仍需指定视觉类别。');
+      const packet = await observe(
+        grounding
+          ? {
+              scope: 'target',
+              category: choice.label,
+              selection: 'one',
+              grounding,
+            }
+          : {
+              scope: 'target',
+              category: choice.label,
+              selection: 'all',
+              vision_mode: visionMode,
+            },
+      );
+      // Instance collections already merge views of the same physical object.
+      candidates = observedCandidates(packet);
+    }
     if (!candidates.length && !grounding) {
       // Recall learned visual identity, then re-localize it in a fresh frame.
       // A remembered/stale box is never sent directly to physical execution.
@@ -113,12 +156,16 @@ export async function groundPrimitive(
       }
     }
     if (!candidates.length && recover && !grounding)
-      candidates = observedCandidates(await recover(choice.label, field));
+      candidates = observedCandidates(await recover(String(choice.label), field));
     candidates.sort((a, b) => Number(b.score ?? 0) - Number(a.score ?? 0));
     const selected = candidates[0];
     if (!selected)
       throw new Error(`本次观察未定位到可选择的 ${choice.label}；未下发机械动作。`);
-    const bound: Record<string, unknown> = { ...choice, ref: selected.ref };
+    const bound: Record<string, unknown> = {
+      ...choice,
+      ref: selected.ref,
+      execution_bound: true,
+    };
     delete bound.grounding;
     if (field === 'target') {
       delete bound.selection;
@@ -136,12 +183,27 @@ export async function groundPrimitive(
     // their free-space destination and are handled by the existing controller.
     let found = false;
     for (const candidate of candidates) {
-      const inspected = await observe({
+      let inspected = await observe({
         ref: candidate.ref,
         inspect: 'grid',
         selection: 'one',
       });
-      const grid = object(inspected.geometry ?? object(inspected.vision).geometry);
+      let grid = object(inspected.geometry ?? object(inspected.vision).geometry);
+      let currentRef =
+        observedCandidates(inspected)[0]?.ref ?? candidate.ref;
+      // Divider masks can be briefly occluded by the arm or a noisy frame. One
+      // local re-observation is cheaper and safer than dispatching a planar
+      // placement or asking the planning model to repeat the same action.
+      if (grid.kind === 'grid' && grid.status === 'unknown') {
+        inspected = await observe({
+          ref: candidate.ref,
+          inspect: 'grid',
+          selection: 'one',
+        });
+        grid = object(inspected.geometry ?? object(inspected.vision).geometry);
+        currentRef = observedCandidates(inspected)[0]?.ref ?? currentRef;
+      }
+      if (grid.kind === 'grid' && grid.status === 'unknown') continue;
       // A single detected interior is an ordinary open tray.  Cell binding is
       // reserved for actual multi-cell bins; otherwise one occupied-looking
       // tray floor incorrectly blocks the free-space allocator.
@@ -150,15 +212,29 @@ export async function groundPrimitive(
         !Array.isArray(grid.cells) ||
         grid.cells.length < 2
       ) {
-        result.params.destination = { ...bound, ref: candidate.ref };
+        result.params.destination = {
+          ...bound,
+          ref: currentRef,
+          grid_checked: true,
+        };
         found = true;
         break;
       }
       const cell = grid.cells
         .map(object)
-        .find((row) => row.occupancy === 'empty' && typeof row.ref === 'string');
+        .find(
+          (row) =>
+            row.occupancy === 'empty' &&
+            (typeof row.cell_id === 'string' || typeof row.ref === 'string'),
+        );
       if (!cell) continue; // A full tray does not exhaust the user's allowed destinations.
-      result.params.destination = { ...bound, ref: candidate.ref, cell_ref: cell.ref };
+      // grid: identities resolve to the newest observation and survive the
+      // camera refresh between grounding and physical command acceptance.
+      result.params.destination = {
+        ...bound,
+        ref: currentRef,
+        cell_ref: cell.cell_id ?? cell.ref,
+      };
       found = true;
       break;
     }

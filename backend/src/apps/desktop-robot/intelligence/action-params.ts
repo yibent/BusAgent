@@ -27,6 +27,14 @@ const selector = {
           enum: ['on', 'inside', 'insert', 'sleeve_on_peg', 'hang'],
           description: '接触关系由AnyPlace姿态与Panda接触轨迹执行。',
         },
+        grid_checked: {
+          type: 'boolean',
+          description: '运行器内部标记：已确认该目标不是多格容器。',
+        },
+        execution_bound: {
+          type: 'boolean',
+          description: '运行器内部标记：物体引用已在本次下发前刷新。',
+        },
         grounding: {
           type: 'object',
           additionalProperties: false,
@@ -110,6 +118,12 @@ export function normalizeActionParams(skill: string, raw: Record<string, unknown
     const value = params[field];
     if (typeof value === 'string' && value.startsWith('obs:'))
       params[field] = { ref: value };
+    else if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const clean = { ...object(value) };
+      delete clean.grid_checked;
+      delete clean.execution_bound;
+      params[field] = clean;
+    }
   }
   const dest = object(params.destination);
   if (dest.relation !== undefined) {
@@ -119,6 +133,19 @@ export function normalizeActionParams(skill: string, raw: Record<string, unknown
     params.destination = Object.fromEntries(
       Object.entries(dest).filter(([key]) => key !== 'relation'),
     );
+  }
+  if (params.relation === 'inside') {
+    const destination = params.destination;
+    if (typeof destination === 'string')
+      params.destination = { label: destination, selection: 'free_space' };
+    else if (
+      destination &&
+      typeof destination === 'object' &&
+      !Array.isArray(destination) &&
+      !object(destination).selection &&
+      !object(destination).cell_ref
+    )
+      params.destination = { ...object(destination), selection: 'free_space' };
   }
   // Accept previously emitted, unambiguous spellings; never discard a requested
   // orientation or invent an endpoint when only an axis was supplied.
