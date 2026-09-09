@@ -44,7 +44,10 @@ export function recoveryObservation(
         max_attempts: 1,
         supervision: { kind: 'physical' },
       },
-      recovery: { kind: 'safe_stow', parent_id: parent.id, key },
+      recovery: {
+        kind: 'safe_stow', parent_id: parent.id, key,
+        ...(typeof held.label === 'string' ? { target_label: held.label } : {}),
+      },
     };
   }
   if (
@@ -139,6 +142,13 @@ export function resolveRecovery(
       goal.skipped_stages = [
         ...new Set([...(goal.skipped_stages ?? []), parent.stage.id]),
       ];
+      if (recovery.target_label)
+        goal.skipped_targets = [
+          ...new Set([
+            ...(goal.skipped_targets ?? []),
+            recovery.target_label.toLowerCase(),
+          ]),
+        ];
       goal.final_review = true;
     }
     goal.state = 'running';

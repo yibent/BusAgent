@@ -147,6 +147,7 @@ export function planningGoal(goal: Goal): unknown {
       final_review: goal.final_review,
       review_reason: goal.review_reason,
       recovery_count: goal.recovery_count,
+      skipped_targets: goal.skipped_targets,
       steps: selected.map((step) => {
         const wrapper = object(step.result);
         const result = object(wrapper.result ?? wrapper);

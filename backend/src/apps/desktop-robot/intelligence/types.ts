@@ -83,6 +83,7 @@ export interface QueueStep extends Action {
     row?: number;
     column?: number;
     object_id?: string;
+    target_label?: string;
     field?: 'target' | 'destination';
   };
   recovery_root?: string;
@@ -126,6 +127,7 @@ export interface Goal {
   architecture?: 'legacy' | 'staged';
   advanced_requirement?: string;
   skipped_stages?: string[];
+  skipped_targets?: string[];
   final_review_count?: number;
   proposal?: Action[];
   interaction?: boolean;

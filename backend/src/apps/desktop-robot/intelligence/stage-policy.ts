@@ -49,6 +49,10 @@ export function skipRepeatedIndependentFailure(
   if (attempts < attemptLimit) return false;
   failed.state = 'superseded';
   goal.skipped_stages = [...new Set([...(goal.skipped_stages ?? []), stage.id])];
+  if (targetLabel)
+    goal.skipped_targets = [
+      ...new Set([...(goal.skipped_targets ?? []), targetLabel.toLowerCase()]),
+    ];
   goal.final_review = true;
   goal.state = 'running';
   delete goal.review_kind;

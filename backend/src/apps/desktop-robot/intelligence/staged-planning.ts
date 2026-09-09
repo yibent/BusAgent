@@ -221,7 +221,7 @@ function advancedSystem(profile: ModelProfile) {
 execution.loop只能为fast_only、fast_then_slow、slow。普通可见物体用fast_then_slow；陌生、杂乱或精确姿态可直接slow。识别链固定为YOLOE→SAM3→Florence，成功后由SAM2/光流持续跟踪。
 目标和目的地可以使用具体开放词汇label或实际ref。不要输出配置资产名。空盘/桌面插空使用selection=free_space；多个物体进入同一敞口容器时系统会自动形成紧凑装盘组，每次放置后重观测剩余空位。框坐标为[ymin,xmin,ymax,xmax]、0..1000，必须绑定当前snapshot_ref和camera。严格服从live.capabilities.placement.relations：on/inside是普通支撑放置；insert、sleeve_on_peg、hang只有在该列表明确出现时才可规划，并分别表达销入孔、轴套套柱、物体悬挂。接触关系必须用pick_place或place_held的relation参数且placement走AnyPlace，不得把治具立柱误称为料箱。
 ${grounding ? '本模型已启用原生框选能力：对需要明确选择的目标可输出grounding={snapshot_ref,camera,box_2d}。' : '本模型没有启用原生框选能力：禁止猜测box_2d或grounding；仅输出具体label/ref，系统使用YOLOE、SAM3和最终Florence定位。'}
-任务修改时保留已完成和运行中阶段，用queue_update=replace_pending替换未执行部分；系统已经绑定目标列表，无需在提交参数中重复列表编号。计划结束后由独立高级复核模型验收，因此final_review=true。`;
+任务修改时保留已完成和运行中阶段，用queue_update=replace_pending替换未执行部分；系统已经绑定目标列表，无需在提交参数中重复列表编号。current_list.skipped_targets中的物体已达到本列表重试上限，不得再次加入动作；用户以后明确重试会建立新列表。计划结束后由独立高级复核模型验收，因此final_review=true。`;
 }
 
 function normalizePacking(actions: Decision['actions']) {
@@ -255,6 +255,19 @@ function normalizePacking(actions: Decision['actions']) {
 }
 
 function normalizeStages(decision: Decision, retryLimit: number, existing?: Goal) {
+  const skippedTargets = new Set(existing?.skipped_targets ?? []);
+  if (skippedTargets.size)
+    decision.actions = decision.actions.filter((action) => {
+      const target = action.params.target;
+      const row =
+        target && typeof target === 'object' && !Array.isArray(target)
+          ? (target as Record<string, unknown>)
+          : {};
+      const label = String(
+        typeof target === 'string' ? target : row.label ?? row.category ?? '',
+      ).toLowerCase();
+      return !label || !skippedTargets.has(label);
+    });
   const retained =
     existing?.steps.filter(
       (step) =>

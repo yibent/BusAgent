@@ -118,6 +118,7 @@ describe('stage verification policy', () => {
     expect(task).toMatchObject({
       state: 'running',
       skipped_stages: ['replanned-stage-9'],
+      skipped_targets: ['part'],
     });
     expect(retry.state).toBe('superseded');
     expect(later.state).toBe('pending');
