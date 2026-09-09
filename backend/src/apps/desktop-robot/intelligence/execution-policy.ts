@@ -154,3 +154,12 @@ export function supervisionUnavailableVerdict(
 ): 'passed' | 'uncertain' {
   return physical === 'passed' ? 'passed' : 'uncertain';
 }
+
+export function mergePhysicalVisualVerdict(
+  physical: 'passed' | 'failed' | 'uncertain',
+  visual: unknown,
+): 'passed' | 'failed' | 'uncertain' {
+  if (physical === 'failed' || visual === 'failed') return 'failed';
+  if (physical === 'passed') return 'passed';
+  return 'uncertain';
+}

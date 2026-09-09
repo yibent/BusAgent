@@ -13,6 +13,7 @@ import {
   retryByPolicy,
   physicalVerdict,
   supervisionUnavailableVerdict,
+  mergePhysicalVisualVerdict,
 } from '../src/apps/desktop-robot/intelligence/execution-policy.js';
 import {
   decisionSchema,
@@ -578,6 +579,11 @@ describe('Mastra owns the decision loop', () => {
     expect(supervisionUnavailableVerdict('passed')).toBe('passed');
     expect(supervisionUnavailableVerdict('uncertain')).toBe('uncertain');
     expect(supervisionUnavailableVerdict('failed')).toBe('uncertain');
+  });
+  it('keeps physical success on visual uncertainty but respects a visual failure', () => {
+    expect(mergePhysicalVisualVerdict('passed', 'uncertain')).toBe('passed');
+    expect(mergePhysicalVisualVerdict('passed', 'failed')).toBe('failed');
+    expect(mergePhysicalVisualVerdict('uncertain', 'passed')).toBe('uncertain');
   });
   it('retains batch append and final review controls in the machine-readable decision', () => {
     expect(

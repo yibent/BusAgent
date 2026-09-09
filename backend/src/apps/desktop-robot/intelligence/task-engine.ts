@@ -3,6 +3,7 @@ import {
   retryByPolicy,
   physicalVerdict,
   supervisionUnavailableVerdict,
+  mergePhysicalVisualVerdict,
 } from './execution-policy.js';
 import { canPrepareAhead, independentAhead } from './lookahead.js';
 import {
@@ -1096,11 +1097,11 @@ export class TaskEngine
               visual: await response.json(),
             };
             const visual = record(evidence.visual);
-            if (visual.verdict !== 'passed' || verdict !== 'passed')
-              verdict =
-                visual.verdict === 'failed' || verdict === 'failed'
-                  ? 'failed'
-                  : 'uncertain';
+            const physical = verdict;
+            verdict = mergePhysicalVisualVerdict(physical, visual.verdict);
+            if (physical === 'passed' && visual.verdict === 'uncertain')
+              evidence.visual_advisory =
+                '局部图像未能确认，但完整物理验收已通过；不重放已释放动作。';
           }
         } catch (error) {
           evidence.error = (error as Error).message;
