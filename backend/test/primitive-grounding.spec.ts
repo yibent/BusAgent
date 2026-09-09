@@ -23,7 +23,10 @@ describe('late binding for ordinary manipulations', () => {
         vision: { references: [{ ref: 'fresh-bin', kind: 'object' }] },
       })
       .mockResolvedValueOnce({
-        geometry: { kind: 'grid', cells: [{ ref: 'cell', occupancy: 'empty' }] },
+        geometry: { kind: 'grid', cells: [
+          { ref: 'cell', occupancy: 'empty' },
+          { ref: 'busy', occupancy: 'occupied' },
+        ] },
       });
     const recover = vi.fn();
     const result = await groundPrimitive(request, observe, recover, [
@@ -46,7 +49,10 @@ describe('late binding for ordinary manipulations', () => {
       .mockResolvedValueOnce({ collection: { instances: [{ ref: 'part' }] } })
       .mockResolvedValueOnce({ collection: { instances: [] } })
       .mockResolvedValueOnce({
-        geometry: { kind: 'grid', cells: [{ occupancy: 'empty', ref: 'cell' }] },
+        geometry: { kind: 'grid', cells: [
+          { occupancy: 'empty', ref: 'cell' },
+          { occupancy: 'occupied', ref: 'busy' },
+        ] },
       });
     const recover = vi.fn().mockResolvedValue({
       vision: { references: [{ ref: 'grounded-container', kind: 'object' }] },
@@ -110,10 +116,16 @@ describe('late binding for ordinary manipulations', () => {
         },
       })
       .mockResolvedValueOnce({
-        geometry: { kind: 'grid', cells: [{ ref: 'busy', occupancy: 'occupied' }] },
+        geometry: { kind: 'grid', cells: [
+          { ref: 'busy-1', occupancy: 'occupied' },
+          { ref: 'busy-2', occupancy: 'occupied' },
+        ] },
       })
       .mockResolvedValueOnce({
-        geometry: { kind: 'grid', cells: [{ ref: 'free', occupancy: 'empty' }] },
+        geometry: { kind: 'grid', cells: [
+          { ref: 'free', occupancy: 'empty' },
+          { ref: 'busy', occupancy: 'occupied' },
+        ] },
       });
     const result = await groundPrimitive(request, observe);
     expect(result.params.destination).toMatchObject({
@@ -141,6 +153,22 @@ describe('late binding for ordinary manipulations', () => {
       .mockResolvedValueOnce({ geometry: { kind: 'unknown' } });
     expect((await groundPrimitive(request, observe)).params.destination).toMatchObject({
       ref: 'plate',
+      selection: 'free_space',
+    });
+  });
+  it('keeps a one-interior open tray in free-space mode', async () => {
+    const observe = vi
+      .fn()
+      .mockResolvedValueOnce({ collection: { instances: [{ ref: 'part' }] } })
+      .mockResolvedValueOnce({ collection: { instances: [{ ref: 'open-tray' }] } })
+      .mockResolvedValueOnce({
+        geometry: {
+          kind: 'grid',
+          cells: [{ ref: 'single-interior', occupancy: 'occupied' }],
+        },
+      });
+    expect((await groundPrimitive(request, observe)).params.destination).toMatchObject({
+      ref: 'open-tray',
       selection: 'free_space',
     });
   });

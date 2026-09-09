@@ -142,7 +142,14 @@ export async function groundPrimitive(
         selection: 'one',
       });
       const grid = object(inspected.geometry ?? object(inspected.vision).geometry);
-      if (grid.kind !== 'grid' || !Array.isArray(grid.cells)) {
+      // A single detected interior is an ordinary open tray.  Cell binding is
+      // reserved for actual multi-cell bins; otherwise one occupied-looking
+      // tray floor incorrectly blocks the free-space allocator.
+      if (
+        grid.kind !== 'grid' ||
+        !Array.isArray(grid.cells) ||
+        grid.cells.length < 2
+      ) {
         result.params.destination = { ...bound, ref: candidate.ref };
         found = true;
         break;
