@@ -1,5 +1,45 @@
 import type { Action, Goal, QueueStep } from './types.js';
 
+const object = (value: unknown): Record<string, unknown> =>
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+
+/** Keep an independent hard object from blocking the rest of a batch. */
+export function skipRepeatedIndependentFailure(
+  goal: Goal,
+  attemptLimit: number,
+): boolean {
+  if (goal.architecture !== 'staged') return false;
+  const failed = goal.steps.findLast((step) => step.state === 'failed');
+  const stage = failed?.stage;
+  if (!failed || !stage) return false;
+  const dependent = goal.steps.some(
+    (candidate) =>
+      candidate.state === 'pending' && candidate.stage?.depends_on.includes(stage.id),
+  );
+  if (dependent) return false;
+  const code = String(
+    object(object(object(failed.result).result ?? failed.result).failure).code ?? '',
+  );
+  if (!['NO_FREE_SPACE', 'TARGET_NOT_FOUND', 'CAPABILITY_MISSING'].includes(code))
+    return false;
+  const attempts = goal.steps.filter((candidate) => {
+    if (candidate.stage?.id !== stage.id) return false;
+    const result = object(object(candidate.result).result ?? candidate.result);
+    return String(object(result.failure).code ?? '') === code;
+  }).length;
+  if (attempts < attemptLimit) return false;
+  failed.state = 'superseded';
+  goal.skipped_stages = [...new Set([...(goal.skipped_stages ?? []), stage.id])];
+  goal.final_review = true;
+  goal.state = 'running';
+  delete goal.review_kind;
+  goal.review_reason = '';
+  goal.message = `阶段 ${stage.number} 连续 ${attempts} 次因 ${code} 失败，已跳过并继续独立阶段。`;
+  return true;
+}
+
 /** Resolve a failed/uncertain stage check without interrupting an unrelated
  * physical command already in flight. */
 export function applyStageVerificationFailure(

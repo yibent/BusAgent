@@ -48,7 +48,10 @@ import { ContextCompression } from '../../../modules/conversation/context-compre
 import { observeScene, readObservation } from './observation-tools.js';
 import { groundPrimitive, needsPrimitiveGrounding } from './primitive-grounding.js';
 import { observeOperation } from './operation-telemetry.js';
-import { applyStageVerificationFailure } from './stage-policy.js';
+import {
+  applyStageVerificationFailure,
+  skipRepeatedIndependentFailure,
+} from './stage-policy.js';
 import { selectImageObject } from './visual-grounding.js';
 import { trackBackground } from '../../../observability/execution-span.js';
 import {
@@ -903,6 +906,18 @@ export class TaskEngine
           (await this.recoverLocally(goal, state))
         )
           return;
+        if (goal.state === 'review') {
+          let skipped = false;
+          await this.store.change((current) => {
+            const pending = current.goals.find((item) => item.id === goal.id);
+            if (pending)
+              skipped = skipRepeatedIndependentFailure(
+                pending,
+                intelligenceSettings.architecture?.stageRetryLimit ?? 2,
+              );
+          });
+          if (skipped) return;
+        }
         if (
           goal.state === 'review' &&
           inferenceRole === 'supervisor' &&

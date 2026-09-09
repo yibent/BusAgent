@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { applyStageVerificationFailure } from '../src/apps/desktop-robot/intelligence/stage-policy.js';
+import {
+  applyStageVerificationFailure,
+  skipRepeatedIndependentFailure,
+} from '../src/apps/desktop-robot/intelligence/stage-policy.js';
 import type {
   Action,
   Goal,
@@ -98,5 +101,21 @@ describe('stage verification policy', () => {
       final_review: true,
       skipped_stages: ['stage-1'],
     });
+  });
+  it('skips repeated independent execution failures and continues later stages', () => {
+    const first = step('first', 'stage-1');
+    first.state = 'superseded';
+    first.result = { result: { failure: { code: 'NO_FREE_SPACE' } } };
+    const retry = step('retry', 'stage-1');
+    retry.state = 'failed';
+    retry.result = { result: { failure: { code: 'NO_FREE_SPACE' } } };
+    const later = step('later', 'stage-2');
+    later.state = 'pending';
+    const task = goal(first, retry, later);
+    task.state = 'review';
+    expect(skipRepeatedIndependentFailure(task, 2)).toBe(true);
+    expect(task).toMatchObject({ state: 'running', skipped_stages: ['stage-1'] });
+    expect(retry.state).toBe('superseded');
+    expect(later.state).toBe('pending');
   });
 });
