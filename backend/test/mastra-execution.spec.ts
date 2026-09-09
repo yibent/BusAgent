@@ -12,6 +12,7 @@ import {
 import {
   retryByPolicy,
   physicalVerdict,
+  supervisionUnavailableVerdict,
 } from '../src/apps/desktop-robot/intelligence/execution-policy.js';
 import {
   decisionSchema,
@@ -572,6 +573,11 @@ describe('Mastra owns the decision loop', () => {
     expect(
       physicalVerdict({ ok: true, holding: { verified: true } }, 'place_held'),
     ).toBe('failed');
+  });
+  it('does not replay a physically completed action when optional visual supervision is unavailable', () => {
+    expect(supervisionUnavailableVerdict('passed')).toBe('passed');
+    expect(supervisionUnavailableVerdict('uncertain')).toBe('uncertain');
+    expect(supervisionUnavailableVerdict('failed')).toBe('uncertain');
   });
   it('retains batch append and final review controls in the machine-readable decision', () => {
     expect(

@@ -145,3 +145,12 @@ export function physicalVerdict(
     return object(value.holding).verified === true ? 'passed' : 'uncertain';
   return value.ok === true ? 'passed' : 'uncertain';
 }
+
+/** An unavailable optional visual checker cannot invalidate a completed
+ * controller action.  Only an actual visual `failed` verdict may request a
+ * stage retry; uncertain physical evidence remains uncertain. */
+export function supervisionUnavailableVerdict(
+  physical: 'passed' | 'failed' | 'uncertain',
+): 'passed' | 'uncertain' {
+  return physical === 'passed' ? 'passed' : 'uncertain';
+}

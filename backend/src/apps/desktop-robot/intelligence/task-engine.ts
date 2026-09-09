@@ -1,4 +1,9 @@
-import { policyParams, retryByPolicy, physicalVerdict } from './execution-policy.js';
+import {
+  policyParams,
+  retryByPolicy,
+  physicalVerdict,
+  supervisionUnavailableVerdict,
+} from './execution-policy.js';
 import { canPrepareAhead, independentAhead } from './lookahead.js';
 import {
   executionGoals,
@@ -1083,8 +1088,9 @@ export class TaskEngine
                   : 'uncertain';
           }
         } catch (error) {
-          verdict = 'uncertain';
           evidence.error = (error as Error).message;
+          evidence.visual_unavailable = true;
+          verdict = supervisionUnavailableVerdict(verdict);
         }
         const stageRetryLimit =
           (await this.models.settings()).architecture?.stageRetryLimit ?? 2;
