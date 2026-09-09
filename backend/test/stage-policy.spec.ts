@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyStageVerificationFailure,
+  recoveryBudgetExceeded,
   skipRepeatedIndependentFailure,
 } from '../src/apps/desktop-robot/intelligence/stage-policy.js';
 import type {
@@ -122,5 +123,16 @@ describe('stage verification policy', () => {
     });
     expect(retry.state).toBe('superseded');
     expect(later.state).toBe('pending');
+  });
+  it('does not let the global recovery budget block independent pending stages', () => {
+    const failed = step('failed', 'stage-1');
+    failed.state = 'failed';
+    const later = step('later', 'stage-2');
+    later.state = 'pending';
+    const task = goal(failed, later);
+    task.recovery_count = 3;
+    expect(recoveryBudgetExceeded(task, 3)).toBe(false);
+    later.state = 'superseded';
+    expect(recoveryBudgetExceeded(task, 3)).toBe(true);
   });
 });

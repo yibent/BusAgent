@@ -51,6 +51,7 @@ import { groundPrimitive, needsPrimitiveGrounding } from './primitive-grounding.
 import { observeOperation } from './operation-telemetry.js';
 import {
   applyStageVerificationFailure,
+  recoveryBudgetExceeded,
   skipRepeatedIndependentFailure,
 } from './stage-policy.js';
 import { selectImageObject } from './visual-grounding.js';
@@ -1713,10 +1714,7 @@ export class TaskEngine
       (goal.final_review_count ?? 0) >= (settings.architecture?.finalReviewLimit ?? 2)
     )
       throw new Error('任务列表已达到高级复核上限，需要用户查看失败阶段。');
-    if (
-      goal.steps.some((s) => s.state === 'failed') &&
-      goal.recovery_count >= settings.recoveryBudget
-    )
+    if (recoveryBudgetExceeded(goal, settings.recoveryBudget))
       throw new Error('连续恢复未取得进展，需要调整策略或提供补充信息。');
     await this.store.change((current) => {
       const g = current.goals.find((g) => g.id === goal.id);

@@ -5,6 +5,14 @@ const object = (value: unknown): Record<string, unknown> =>
     ? (value as Record<string, unknown>)
     : {};
 
+export function recoveryBudgetExceeded(goal: Goal, budget: number) {
+  const hasFailure = goal.steps.some((step) => step.state === 'failed');
+  const hasIndependentWork =
+    goal.architecture === 'staged' &&
+    goal.steps.some((step) => step.state === 'pending');
+  return hasFailure && goal.recovery_count >= budget && !hasIndependentWork;
+}
+
 /** Keep an independent hard object from blocking the rest of a batch. */
 export function skipRepeatedIndependentFailure(
   goal: Goal,
