@@ -125,7 +125,15 @@ export function resolveRecovery(
   const parent = goal.steps.find((s) => s.id === recovery.parent_id);
   const result = resultOf(child);
   const vision = object(result.vision);
-  if (child.state === 'completed' && parent && recovery.kind === 'safe_stow') {
+  const recoveryHolding = object(result.holding);
+  const gripperCleared =
+    recoveryHolding.verified === false && result.held_object == null;
+  if (
+    parent &&
+    recovery.kind === 'safe_stow' &&
+    (child.state === 'completed' || gripperCleared)
+  ) {
+    if (child.state !== 'completed') child.state = 'superseded';
     parent.state = 'superseded';
     if (parent.stage) {
       goal.skipped_stages = [
@@ -136,7 +144,9 @@ export function resolveRecovery(
     goal.state = 'running';
     delete goal.review_kind;
     goal.review_reason = '';
-    goal.message = '难件已安全放到桌面空处，继续执行其余独立阶段。';
+    goal.message = gripperCleared
+      ? '难件未完成装盘，但夹爪已清空；保留失败证据并继续其余独立阶段。'
+      : '难件已安全放到桌面空处，继续执行其余独立阶段。';
     return true;
   }
   if (child.state === 'completed' && parent && recovery.kind === 'verify_cell') {

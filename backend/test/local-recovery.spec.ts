@@ -169,4 +169,28 @@ describe('cause-specific local recovery', () => {
     expect(goal).toMatchObject({ state: 'running', skipped_stages: ['hard-shaft'] });
     expect(pending.state).toBe('pending');
   });
+
+  it('continues after safe stow loses the object but confirms an empty gripper', () => {
+    const { goal, state, first, pending } = setup();
+    first.skill = 'place_held';
+    first.stage = {
+      id: 'hard-shaft', number: 2, title: '长轴装盘', depends_on: [],
+      expected_state: '长轴位于托盘内',
+    };
+    const proposal = {
+      ...makeStep({ title: '清场', skill: 'place_held', params: {
+        destination: { label: 'table', selection: 'free_space' },
+      }, review_after: false }),
+      recovery: { kind: 'safe_stow' as const, parent_id: first.id, key: 'stow' },
+      state: 'failed' as const,
+      result: { held_object: null, holding: { verified: false },
+        failure: { code: 'NOT_HOLDING' } },
+    };
+    goal.steps.splice(1, 0, proposal);
+    expect(resolveRecovery(goal, proposal, state, makeStep)).toBe(true);
+    expect(proposal.state).toBe('superseded');
+    expect(first.state).toBe('superseded');
+    expect(goal).toMatchObject({ state: 'running', skipped_stages: ['hard-shaft'] });
+    expect(pending.state).toBe('pending');
+  });
 });
