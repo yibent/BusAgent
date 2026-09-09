@@ -24,8 +24,25 @@ export function skipRepeatedIndependentFailure(
   );
   if (!['NO_FREE_SPACE', 'TARGET_NOT_FOUND', 'CAPABILITY_MISSING'].includes(code))
     return false;
+  const target = object(failed.params.target);
+  const targetLabel = String(
+    typeof failed.params.target === 'string'
+      ? failed.params.target
+      : target.label ?? target.category ?? '',
+  );
   const attempts = goal.steps.filter((candidate) => {
-    if (candidate.stage?.id !== stage.id) return false;
+    const candidateTarget = object(candidate.params.target);
+    const candidateLabel = String(
+      typeof candidate.params.target === 'string'
+        ? candidate.params.target
+        : candidateTarget.label ?? candidateTarget.category ?? '',
+    );
+    const sameStage =
+      candidate.stage?.id === stage.id ||
+      (candidate.stage?.number === stage.number &&
+        candidate.skill === failed.skill &&
+        candidateLabel === targetLabel);
+    if (!sameStage) return false;
     const result = object(object(candidate.result).result ?? candidate.result);
     return String(object(result.failure).code ?? '') === code;
   }).length;

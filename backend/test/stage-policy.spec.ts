@@ -106,7 +106,8 @@ describe('stage verification policy', () => {
     const first = step('first', 'stage-1');
     first.state = 'superseded';
     first.result = { result: { failure: { code: 'NO_FREE_SPACE' } } };
-    const retry = step('retry', 'stage-1');
+    const retry = step('retry', 'replanned-stage-9');
+    retry.stage = { ...retry.stage!, number: 1 };
     retry.state = 'failed';
     retry.result = { result: { failure: { code: 'NO_FREE_SPACE' } } };
     const later = step('later', 'stage-2');
@@ -114,7 +115,10 @@ describe('stage verification policy', () => {
     const task = goal(first, retry, later);
     task.state = 'review';
     expect(skipRepeatedIndependentFailure(task, 2)).toBe(true);
-    expect(task).toMatchObject({ state: 'running', skipped_stages: ['stage-1'] });
+    expect(task).toMatchObject({
+      state: 'running',
+      skipped_stages: ['replanned-stage-9'],
+    });
     expect(retry.state).toBe('superseded');
     expect(later.state).toBe('pending');
   });
