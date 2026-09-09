@@ -18,6 +18,35 @@ export function recoveryObservation(
   const root = parent.recovery_root ?? parent.id;
   const destination = object(parent.params.destination);
   const operation = object(result.operation);
+  const held = object(state.scene.holding);
+  if (
+    parent.state === 'failed' &&
+    held.verified === true &&
+    ['NO_FREE_SPACE', 'NO_IK'].includes(String(code)) &&
+    ['pick_place', 'place_held'].includes(parent.skill)
+  ) {
+    const key = `safe_stow:${root}`;
+    if (goal.local_recoveries?.includes(key)) return;
+    return {
+      title: '将持物放到桌面空处后继续',
+      skill: 'place_held',
+      review_after: false,
+      params: {
+        destination: {
+          label: 'table',
+          selection: 'free_space',
+          preference: 'nearest',
+        },
+        relation: 'on',
+      },
+      execution: {
+        loop: 'fast_then_slow',
+        max_attempts: 1,
+        supervision: { kind: 'physical' },
+      },
+      recovery: { kind: 'safe_stow', parent_id: parent.id, key },
+    };
+  }
   if (
     parent.state === 'completed' &&
     goal.review_kind === 'verification' &&
@@ -47,7 +76,6 @@ export function recoveryObservation(
   )
     return;
   if (parent.params.orientation || destination.cell_ref) return;
-  const held = object(state.scene.holding);
   if (held.unknown === true || typeof held.verified !== 'boolean') return;
   const field = held.verified ? 'destination' : 'target';
   const target = parent.params[field];
@@ -97,6 +125,20 @@ export function resolveRecovery(
   const parent = goal.steps.find((s) => s.id === recovery.parent_id);
   const result = resultOf(child);
   const vision = object(result.vision);
+  if (child.state === 'completed' && parent && recovery.kind === 'safe_stow') {
+    parent.state = 'superseded';
+    if (parent.stage) {
+      goal.skipped_stages = [
+        ...new Set([...(goal.skipped_stages ?? []), parent.stage.id]),
+      ];
+      goal.final_review = true;
+    }
+    goal.state = 'running';
+    delete goal.review_kind;
+    goal.review_reason = '';
+    goal.message = '难件已安全放到桌面空处，继续执行其余独立阶段。';
+    return true;
+  }
   if (child.state === 'completed' && parent && recovery.kind === 'verify_cell') {
     const grid = object(result.geometry ?? vision.geometry);
     const cell = (Array.isArray(grid.cells) ? grid.cells : [])

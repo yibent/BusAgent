@@ -138,4 +138,35 @@ describe('cause-specific local recovery', () => {
     expect(first.result.review_required).toBe(true); // original evidence is immutable
     expect(goal.steps.filter((s) => s.skill === 'pick_place')).toHaveLength(1);
   });
+
+  it('stows a held hard object on table and continues independent work without a model', () => {
+    const { goal, state, first, pending } = setup();
+    first.skill = 'place_held';
+    first.stage = {
+      id: 'hard-shaft', number: 2, title: '长轴装盘', depends_on: [],
+      expected_state: '长轴位于托盘内',
+    };
+    first.result = {
+      result: {
+        failure: { code: 'NO_FREE_SPACE' },
+        holding: { verified: true },
+      },
+    };
+    state.scene.holding = { verified: true };
+    const proposal = recoveryObservation(goal, state)!;
+    expect(proposal).toMatchObject({
+      skill: 'place_held',
+      params: { destination: { label: 'table', selection: 'free_space' } },
+      recovery: { kind: 'safe_stow' },
+    });
+    const stowed = {
+      ...makeStep(proposal), recovery: proposal.recovery, state: 'completed',
+      result: { evaluation: { physical_success: true, released: true } },
+    } as QueueStep;
+    goal.steps.splice(1, 0, stowed);
+    expect(resolveRecovery(goal, stowed, state, makeStep)).toBe(true);
+    expect(first.state).toBe('superseded');
+    expect(goal).toMatchObject({ state: 'running', skipped_stages: ['hard-shaft'] });
+    expect(pending.state).toBe('pending');
+  });
 });

@@ -76,7 +76,7 @@ export const reviewSchema = z.object({
 });
 export interface QueueStep extends Action {
   recovery?: {
-    kind: 'verify_cell' | 'relocalize';
+    kind: 'verify_cell' | 'relocalize' | 'safe_stow';
     parent_id: string;
     key: string;
     cell_id?: string;
