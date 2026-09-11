@@ -35,6 +35,17 @@ interface Journal {
   operation: Operation | null;
 }
 
+async function activeGroundingMode(): Promise<'visual' | 'truth'> {
+  try {
+    const profile = await json<{ grounding_mode?: unknown }>(
+      resolve(root, 'output/services/arena-scene.json'),
+    );
+    return profile.grounding_mode === 'truth' ? 'truth' : 'visual';
+  } catch {
+    return 'visual';
+  }
+}
+
 const json = async <T>(path: string): Promise<T> =>
   JSON.parse(await readFile(path, 'utf8')) as T;
 
@@ -73,7 +84,12 @@ async function saveJournal(value: Journal): Promise<void> {
 
 export async function workspaceStatus() {
   const state = await readJournal();
-  return { ...state, scene_id: await activeScene(), scenes: await scenes() };
+  return {
+    ...state,
+    scene_id: await activeScene(),
+    grounding_mode: await activeGroundingMode(),
+    scenes: await scenes(),
+  };
 }
 
 export async function submitWorkspaceTransition(
@@ -114,6 +130,8 @@ export async function submitWorkspaceTransition(
         sceneId,
         '--epoch',
         epoch,
+        '--grounding-mode',
+        groundingMode,
       ],
       {
         cwd: root,
