@@ -117,6 +117,8 @@ export function SceneBrowser({
   selected,
   onSelect,
   onEnter,
+  groundingMode,
+  onGroundingModeChange,
   loading,
   onRefresh,
 }: {
@@ -125,6 +127,8 @@ export function SceneBrowser({
   selected: string | null;
   onSelect: (id: string) => void;
   onEnter: () => void;
+  groundingMode: "visual" | "truth";
+  onGroundingModeChange: (mode: "visual" | "truth") => void;
   loading: boolean;
   onRefresh: () => void;
 }) {
@@ -232,6 +236,13 @@ export function SceneBrowser({
                 : "进入后可查看实时画面、发出任务并浏览执行时间轴。"
               : "场景配置和执行记录将在同一个工作区中呈现。"}
           </p>
+          <label>
+            定位路径&nbsp;
+            <select value={groundingMode} onChange={(e) => onGroundingModeChange(e.target.value as "visual" | "truth")}>
+              <option value="visual">常规视觉/RGB-D</option>
+              <option value="truth">Isaac Sim 真值</option>
+            </select>
+          </label>
         </div>
         <Button
           onClick={onEnter}

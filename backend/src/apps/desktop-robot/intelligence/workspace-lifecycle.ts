@@ -26,6 +26,7 @@ interface Operation {
   epoch: string;
   phase: string;
   message: string;
+  grounding_mode?: 'visual' | 'truth';
   started_at?: number;
   finished_at?: number;
 }
@@ -76,13 +77,14 @@ export async function workspaceStatus() {
 }
 
 export async function submitWorkspaceTransition(
-  body: { scene_id?: unknown; request_id?: unknown },
+  body: { scene_id?: unknown; request_id?: unknown; grounding_mode?: unknown },
 ) {
   if (submitting) throw new Error('场景切换请求正在提交，请稍候。');
   submitting = true;
   try {
     const sceneId = typeof body.scene_id === 'string' ? body.scene_id : '';
     const requestId = typeof body.request_id === 'string' ? body.request_id : '';
+    const groundingMode = body.grounding_mode === 'truth' ? 'truth' : 'visual';
     if (!/^[a-f0-9-]{32,40}$/.test(requestId)) throw new Error('请求编号无效。');
     const catalog = await scenes();
     if (!catalog.some((scene) => scene.id === sceneId))
@@ -98,6 +100,7 @@ export async function submitWorkspaceTransition(
       epoch,
       phase: 'stopping',
       message: '正在准备停止当前任务和仿真…',
+      grounding_mode: groundingMode,
       started_at: Date.now() / 1000,
     };
     await saveJournal({ epoch, operation });

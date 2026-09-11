@@ -16,6 +16,7 @@ export interface WorkspaceLifecycle {
     scene_id: string;
     phase: string;
     message: string;
+    grounding_mode?: "visual" | "truth";
   };
 }
 export interface SceneObject {
@@ -143,9 +144,10 @@ export async function getWorkspace(): Promise<WorkspaceState> {
   }
 }
 
-export async function transitionWorkspace(scene_id: string) {
+export async function transitionWorkspace(scene_id: string, grounding_mode: "visual" | "truth" = "visual") {
   return request<WorkspaceLifecycle>("/v1/workspace/transition", {
     scene_id,
+    grounding_mode,
     request_id: crypto.randomUUID(),
   });
 }

@@ -56,6 +56,7 @@ export function WorkbenchPage() {
   );
   const [reviewStep, setReviewStep] = useState(0);
   const [selectedScene, setSelectedScene] = useState<string | null>(null);
+  const [groundingMode, setGroundingMode] = useState<"visual" | "truth">("visual");
   const [enteredScene, setEnteredScene] = useState<string | null>(null);
   const [selectedClip, setSelectedClip] = useState<TimelineClip | null>(null);
   const [tab, setTab] = useState<InspectorTab>("node");
@@ -94,7 +95,7 @@ export function WorkbenchPage() {
     if (!confirmation) return;
     setSubmittingTransition(true);
     try {
-      await transitionWorkspace(confirmation.scene);
+      await transitionWorkspace(confirmation.scene, groundingMode);
       setConfirmation(null);
       await refresh();
     } catch (e) {
@@ -174,6 +175,8 @@ export function WorkbenchPage() {
             setConfirmation({ scene: id, fullReset: false });
         }}
         onEnter={() => void enterScene()}
+        groundingMode={groundingMode}
+        onGroundingModeChange={setGroundingMode}
         loading={busy}
         onRefresh={() => void refresh()}
       />
