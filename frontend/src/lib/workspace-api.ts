@@ -10,6 +10,7 @@ export interface ScenePreset {
 export interface WorkspaceLifecycle {
   epoch: string;
   scene_id: string;
+  grounding_mode?: "visual" | "truth";
   scenes: ScenePreset[];
   operation: null | {
     id: string;

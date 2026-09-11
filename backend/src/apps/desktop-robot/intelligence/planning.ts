@@ -10,7 +10,7 @@ import { Memory } from '@mastra/memory';
 import { LibSQLStore } from '@mastra/libsql';
 import { resolve } from 'node:path';
 import { mkdirSync } from 'node:fs';
-import { PLANNER_SYSTEM, SUPERVISOR_SYSTEM, SKILL_GUIDES } from './agent-prompts.js';
+import { PLANNER_SYSTEM, SUPERVISOR_SYSTEM, SKILL_GUIDES, groundingPrompt } from './agent-prompts.js';
 import { actionParamsJsonSchema } from './action-params.js';
 import { observeOperation } from './operation-telemetry.js';
 import { InferenceWindow } from './context-window.js';
@@ -906,6 +906,7 @@ export async function planGoal(
     name: `Robot ${role}`,
     instructions:
       (role === 'planner' ? PLANNER_SYSTEM : SUPERVISOR_SYSTEM) +
+      groundingPrompt(profile.provider) +
       '\n不可压缩的当前用户目标：' +
       goal.source,
     model: mastraModel(

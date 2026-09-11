@@ -64,6 +64,7 @@ export function intelligenceRoutes(
         request.body as {
           scene_id?: unknown;
           request_id?: unknown;
+          grounding_mode?: unknown;
         },
       ),
     ),

@@ -82,6 +82,7 @@ export function WorkbenchPage() {
     !!operation && !["completed", "failed"].includes(operation.phase);
   useEffect(() => {
     if (!lifecycle) return;
+    setGroundingMode(lifecycle.grounding_mode ?? "visual");
     if (knownEpoch.current === null) knownEpoch.current = lifecycle.epoch;
     else if (
       knownEpoch.current !== lifecycle.epoch &&
@@ -150,7 +151,10 @@ export function WorkbenchPage() {
   );
   const enterScene = async () => {
     if (!selectedScene || !workspace) return;
-    if (selectedScene !== workspace.scene_id) {
+    if (
+      selectedScene !== workspace.scene_id ||
+      groundingMode !== (workspace.lifecycle?.grounding_mode ?? "visual")
+    ) {
       setConfirmation({ scene: selectedScene, fullReset: false });
       return;
     }

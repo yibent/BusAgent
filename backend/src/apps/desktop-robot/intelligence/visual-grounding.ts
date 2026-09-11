@@ -1,6 +1,7 @@
 import { complete, type Message, type Tool } from './model-client.js';
 import { routedCompletion } from './model-routing.js';
 import type { ModelProfile } from './model-config.js';
+import { groundingMode } from './agent-prompts.js';
 
 const selectionTool: Tool = {
   type: 'function',
@@ -80,6 +81,8 @@ export async function selectImageObject(
   record: (event: Record<string, unknown>) => Promise<void>,
   call = complete,
 ) {
+  if (groundingMode() === 'truth')
+    throw new Error('Isaac Sim 真值模式禁止 Gemini 图像框选；请仅提供物品标签。');
   const messages: Message[] = [
     {
       role: 'user',
